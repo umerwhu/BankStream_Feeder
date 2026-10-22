@@ -1,0 +1,25 @@
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+
+# Dependencies and runtime artifacts
+node_modules/
+logs/
+*.log
+*.pid
+*.tmp
+*.class
+coverage/
+dist/
+build/
+target/
+out/
+*.swp
+*.bak
+
+# Local operating system and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

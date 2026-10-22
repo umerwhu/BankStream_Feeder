@@ -1,0 +1,17 @@
+{
+  "name": "banking-customer360-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time CDC workload for existing Db2 for i and Oracle banking databases",
+  "main": "src/demo.js",
+  "scripts": {
+    "realtime": "node src/demo.js realtime",
+    "dry-run": "node src/demo.js dry-run",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "odbc": "^2.4.9",
+    "oracledb": "^6.7.0"
+  }
+}
