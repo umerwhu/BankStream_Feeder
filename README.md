@@ -2,32 +2,6 @@
 
 BankStream demonstrates TapData CDC across IBM i Db2 for i (`BANKCORE`) and Oracle (`BANKCRM`). Responsibilities are separated: `ddl/` contains one-time manual schema setup, `bulk-data/` contains manually executed initial sample records, and `src/` contains only the Node.js connectivity check and continuous real-time feeder.
 
-## Architecture
-
-```mermaid
-flowchart LR
-    feeder[Node.js real-time feeder]
-    jdbc[Project-local JT400 JDBC\nor IBM i Access ODBC]
-    ora[Oracle node-oracledb]
-    ibmi[(IBM i / Db2 for i\nBANKCORE)]
-    oracle[(Oracle\nBANKCRM)]
-    tap[TapData CDC pipelines]
-    target[(Configured TapData target)]
-    api[Published APIs]
-    dashboard[BankStream AI Dashboard]
-    setup[Manual DDL + initial sample load]
-
-    feeder --> jdbc --> ibmi
-    feeder --> ora --> oracle
-    setup -. one-time setup .-> ibmi
-    setup -. one-time setup .-> oracle
-    ibmi -->|source changes| tap
-    oracle -->|source changes| tap
-    tap --> target --> api --> dashboard
-```
-
-The feeder writes to IBM i and Oracle through their native connections. TapData is configured separately to capture changes from those databases and move them through its target and published APIs. The feeder does not call TapData. `DATA_SOURCE` choices such as demo data, MongoDB, and TapData belong to the separate dashboard and are not feeder connection modes.
-
 ## Prerequisites
 
 - Node.js 20 or later and npm.
