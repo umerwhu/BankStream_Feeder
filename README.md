@@ -1,6 +1,6 @@
 # BankStream Feeder
 
-BankStream Feeder creates sample banking activity in the demo’s Oracle and IBM i (AS400) databases. TapData can capture these changes for the BankStream dashboard demo. The feeder uses existing tables; it does not create schemas or load the initial sample data.
+BankStream Feeder simulates real-time banking activity by continuously inserting new records and updating existing data in Oracle and IBM i (AS400) databases. These changes can be captured by TapData using real-time Change Data Capture (CDC), enabling live data integration and updates for the BankStream AI Dashboard demo.
 
 ## Tables changed by the feeder
 
