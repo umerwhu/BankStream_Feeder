@@ -1,10 +1,14 @@
 -- Setup phase: run these statements as an IBM i administrator with schema authority.
--- Replace DB2IRUN with the existing IBM i profile configured in DB2I_USER.
-CREATE SCHEMA BANKCORE AUTHORIZATION DB2IRUN;
-GRANT USAGE ON SCHEMA BANKCORE TO USER DB2IRUN;
 
--- Reconnect as DB2IRUN, then run this script from here onward.
--- The schema owner already has CREATEIN and ALTERIN for table and constraint setup.
+-- . Grant table permissions Run the following using a user with sufficient authority:
+
+
+GRANT SELECT, INSERT, UPDATE
+ON TABLE BANKCORE.CUSTOMER
+TO USER username;
+
+CREATE SCHEMA BANKCORE;
+
 SET CURRENT SCHEMA = BANKCORE;
 
 CREATE TABLE BANKCORE.CUSTOMER (
