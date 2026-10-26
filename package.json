@@ -7,6 +7,10 @@
   "scripts": {
     "realtime": "node src/demo.js realtime",
     "dry-run": "node src/demo.js dry-run",
+    "demo:status": "node src/demo-cli.js status",
+    "demo:transaction": "node src/demo-cli.js transaction",
+    "demo:kyc": "node src/demo-cli.js kyc",
+    "demo:verify": "node src/demo-cli.js verify",
     "test": "node --test"
   },
   "dependencies": {

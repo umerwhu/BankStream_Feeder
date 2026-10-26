@@ -35,6 +35,8 @@ cp .env.example .env
 
 In PowerShell, use `Copy-Item .env.example .env` instead. Set the Oracle user, password, connect string, and schema (`ORACLE_*` variables). For the default IBM i connection, set the host, schema, user, and password (`DB2I_HOST`, `DB2I_SCHEMA`, `DB2I_USER`, and `DB2I_PASSWORD`). The project-local JT400 driver path is already set in the example. Keep `.env` private; it is excluded from Git.
 
+The optional Customer 360 demo settings select the customer and linked account used by the demo commands. Defaults are customer `100002`, account `AC1000021`, and a fixed withdrawal of `GBP 200`. The withdrawal amount and currency must remain `200` and `GBP`.
+
 ## Quick start
 
 From the project folder, run:
@@ -46,6 +48,25 @@ npm run realtime -- --duration 5m --interval 15s
 ```
 
 `dry-run` checks database connectivity without writing data. The real-time command runs for five minutes; press **Ctrl+C** to stop earlier.
+
+## Customer 360 demo commands
+
+These commands run independently of the real-time feeder. The selected customer and account must already exist in the databases and be linked through `ACCOUNT_CUSTOMER_RELATIONSHIP`.
+
+```sh
+npm run demo:status
+npm run demo:transaction
+npm run demo:verify
+npm run demo:kyc
+npm run demo:verify
+```
+
+- `demo:status` reads the customer, linked account balances, recent transactions, and Oracle KYC details.
+- `demo:transaction` creates one completed GBP 200 withdrawal and deducts it from the account balance and available balance in the same database transaction. Type the requested confirmation when prompted. Each confirmed run creates a new withdrawal.
+- `demo:kyc` sets the existing Oracle KYC record to `REVIEW_REQUIRED` with risk rating `HIGH`. Type the requested confirmation when prompted. Re-running it makes no change if those values are already set.
+- `demo:verify` reads the latest demo withdrawal, current account balances, and Oracle KYC values from the source databases.
+
+The status and verify commands are read-only. The transaction and KYC commands change remote database records only after interactive confirmation. There is no reset or recovery command; withdrawals are not reversed automatically.
 
 ## Verify changes
 
