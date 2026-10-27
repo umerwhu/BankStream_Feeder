@@ -1,4 +1,3 @@
-const odbc = require('odbc');
 const oracledb = require('oracledb');
 const fs = require('node:fs');
 const { connectDb2Jdbc } = require('./db2-jdbc-bridge');
@@ -22,6 +21,9 @@ async function connectDb2(config) {
       password: config.db2.password
     });
   }
+  // The native ODBC binding is required only for DSN/ODBC connections. Keep
+  // it out of the JDBC path so macOS users with JT400 do not need unixODBC.
+  const odbc = require('odbc');
   return odbc.connect(db2ConnectionString(config));
 }
 async function connectOracle(config) {

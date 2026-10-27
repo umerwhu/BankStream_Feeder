@@ -6,6 +6,7 @@
 # Dependencies and runtime artifacts
 node_modules/
 logs/
+runtime/
 *.log
 *.pid
 *.tmp
