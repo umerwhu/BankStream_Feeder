@@ -46,7 +46,8 @@ function compare(source, api) {
   const acct = core?.account;
   const txns = acct && pick(acct, ['ACCOUNT_TRANSACTION', 'accountTransaction', 'account_transaction']);
   const txn = Array.isArray(txns) ? txns.find(row => equalText(pick(row, ['TRANSACTION_ID', 'transactionId', 'transaction_id']), source.transaction.id)) : null;
-  const kyc = api.kyc.find(row => equalText(pick(row, ['CUSTOMER_ID', 'customerId', 'customer_id']), source.customerId)) || null;
+  const expectedKycCustomerId = source.kyc?.customerId || source.customerId;
+  const kyc = api.kyc.find(row => equalText(pick(row, ['CUSTOMER_ID', 'customerId', 'customer_id']), expectedKycCustomerId)) || null;
   const fields = [
     ['Account', 'Customer ID', source.customerId, core && pick(core.customer, ['CUSTOMER_ID', 'customerId', 'customer_id']), 'text'],
     ['Account', 'Account ID', source.accountId, core?.relationship && pick(core.relationship, ['ACCOUNT_ID', 'accountId', 'account_id']), 'text'],
@@ -162,28 +163,85 @@ function createTapDataVerifier({ env = process.env, fetchImpl = globalThis.fetch
     return { core: accountFromCustomer(customers, source), kyc };
   }
 
-  async function verify(source) {
+  async function verify(sourceOrRead, { transactionId } = {}) {
     const interval = Number(env.DEMO_API_CDC_RETRY_INTERVAL_MS || DEFAULTS.retryIntervalMs);
     const timeout = Number(env.DEMO_API_CDC_TIMEOUT_MS || DEFAULTS.retryTimeoutMs);
     if (!Number.isSafeInteger(interval) || interval < 0 || !Number.isSafeInteger(timeout) || timeout < 0) throw new Error('DEMO_API_CDC_RETRY_INTERVAL_MS and DEMO_API_CDC_TIMEOUT_MS must be nonnegative integers');
+    const readSource = typeof sourceOrRead === 'function' ? sourceOrRead : async selectedId => ({
+      ...sourceOrRead, latestTransactionId: sourceOrRead.latestTransactionId || selectedId || sourceOrRead.transaction?.id
+    });
+    const explicitTransactionId = transactionId ? String(transactionId).trim() : null;
     const started = now();
-    const token = await bearerToken();
+    let token;
+    let tokenLoaded = false;
     let attempts = 0;
     let comparisons = [];
     let lastError;
+    let selectedId = explicitTransactionId;
+    let latestSource;
+    const fingerprint = value => JSON.stringify({ customerId: String(value.customerId), accountId: String(value.accountId),
+      balance: String(value.balance), availableBalance: String(value.availableBalance), currency: String(value.currency),
+      transaction: Object.fromEntries(Object.entries(value.transaction || {}).map(([key, item]) => [key, String(item)])),
+      kyc: Object.fromEntries(Object.entries(value.kyc || {}).map(([key, item]) => [key, String(item)])),
+      latestTransactionId: explicitTransactionId ? undefined : String(value.latestTransactionId) });
+    const appendSourceValidity = (rows, source) => {
+      if (source.transactionValid === false) rows.push({ group: 'Transaction', field: 'Source withdrawal status',
+        source: 'FAIL: expected WITHDRAWAL / POSTED / COMPLETED / GBP', api: 'NOT APPLICABLE', passed: false });
+    };
     while (true) {
       attempts++;
+      let source;
       try {
+        source = await readSource(selectedId);
+        if (!selectedId) selectedId = String(source.transaction?.id || '').trim();
+        if (!selectedId) throw new Error('DB2 did not return a transaction ID to verify');
+        if (String(source.transaction?.id || '').trim() !== selectedId) throw new Error('DB2 did not return the selected transaction ID');
+        if (!explicitTransactionId && String(source.latestTransactionId || '').trim() !== selectedId) {
+          comparisons = compare(source, { core: null, kyc: [] });
+          comparisons.push({ group: 'Transaction', field: 'Latest transaction remained stable', source: selectedId,
+            api: String(source.latestTransactionId || 'MISSING'), passed: false });
+          return { passed: false, comparisons, attempts, timedOut: false, sourceChanged: true, transactionId: selectedId,
+            error: 'A newer completed withdrawal appeared during verification. No transaction was silently substituted; rerun the command.' };
+        }
+        if (!tokenLoaded) { token = await bearerToken(); tokenLoaded = true; }
         const api = await fetchSnapshot(source, token);
-        comparisons = compare(source, api);
-        if (comparisons.every(item => item.passed)) return { passed: true, comparisons, attempts, timedOut: false };
-        lastError = undefined;
+        const after = await readSource(selectedId);
+        if (fingerprint(source) !== fingerprint(after)) {
+          latestSource = after;
+          comparisons = [];
+          lastError = new Error('Source values changed during API retrieval; retrying against a fresh source snapshot');
+          if (!explicitTransactionId && String(after.latestTransactionId || '').trim() !== selectedId) {
+            comparisons = compare(after, api);
+            comparisons.push({ group: 'Transaction', field: 'Latest transaction remained stable', source: selectedId,
+              api: String(after.latestTransactionId || 'MISSING'), passed: false });
+            return { passed: false, comparisons, attempts, timedOut: false, sourceChanged: true, transactionId: selectedId,
+              error: 'A newer completed withdrawal appeared during verification. No transaction was silently substituted; rerun the command.' };
+          }
+        } else {
+          latestSource = source;
+          comparisons = compare(source, api);
+          appendSourceValidity(comparisons, source);
+          if (comparisons.every(item => item.passed)) return { passed: true, comparisons, attempts, timedOut: false, transactionId: selectedId };
+          lastError = undefined;
+        }
       } catch (error) {
         lastError = error;
-        if (!error.retryable && !/^TapData request failed:/.test(error.message)) throw error;
+        if (!error.retryable && !/^TapData request failed:/.test(error.message)) {
+          if (!source) throw error;
+          comparisons = compare(source, { core: null, kyc: [] });
+          appendSourceValidity(comparisons, source);
+          return { passed: false, comparisons, attempts, timedOut: false, transactionId: selectedId, error: error.message };
+        }
+        if (source) { latestSource = source; comparisons = []; }
       }
       const elapsed = now() - started;
-      if (elapsed >= timeout) return { passed: false, comparisons, attempts, timedOut: true, error: lastError?.message };
+      if (elapsed >= timeout) {
+        if (latestSource && comparisons.length === 0) {
+          comparisons = compare(latestSource, { core: null, kyc: [] });
+          appendSourceValidity(comparisons, latestSource);
+        }
+        return { passed: false, comparisons, attempts, timedOut: true, transactionId: selectedId, error: lastError?.message };
+      }
       await sleep(Math.min(interval, timeout - elapsed));
     }
   }
@@ -195,6 +253,7 @@ function printReport(result, source) {
   console.log('========== TAPDATA API VERIFICATION ==========');
   console.log(`\nCustomer ID: ${source.customerId}`);
   console.log(`Account ID : ${source.accountId}`);
+  if (source.transaction?.id) console.log(`Selected transaction: ${source.transaction.id}${source.transaction.timestamp ? ` (${source.transaction.timestamp})` : ''}`);
   const groups = [...new Set(result.comparisons.map(row => row.group))];
   for (const group of groups) {
     console.log(`\n${group.toUpperCase()} COMPARISON`);

@@ -79,6 +79,16 @@ test('missing exact transaction in API records fails comparison', () => {
   assert.equal(result.find(item => item.field === 'Transaction ID').passed, false);
 });
 
+test('KYC API comparison selects the explicitly returned KYC customer independently from the account customer', () => {
+  const sourceForOtherAccount = { ...source, customerId: '100011', accountId: 'AC1000111', kyc: { ...source.kyc, customerId: '100002' } };
+  const api = payload();
+  const core = api.customers.data[0];
+  const relationship = core.ACCOUNT_CUSTOMER_RELATIONSHIP[0];
+  const result = compare(sourceForOtherAccount, { core: { customer: core, relationship, account: relationship.ACCOUNT }, kyc: api.kyc.data });
+  assert.equal(result.find(item => item.field === 'KYC Status').passed, true);
+  assert.equal(result.find(item => item.field === 'Risk Rating').passed, true);
+});
+
 test('missing API fields are reported and never pass', async () => {
   const result = await verifier(mockFetch(payload({ omitBalance: true })).fetch, { DEMO_API_CDC_TIMEOUT_MS: '0' }).verify(source);
   const row = result.comparisons.find(item => item.field === 'Balance');
@@ -90,7 +100,10 @@ test('missing API fields are reported and never pass', async () => {
 test('TapData authentication errors fail clearly without leaking credentials', async () => {
   const fetch = async () => ({ ok: false, status: 401, json: async () => ({}) });
   const api = verifier(fetch, { TAPDATA_ACCESS_TOKEN: '', TAPDATA_TOKEN_URL: 'https://tapdata.test/oauth', TAPDATA_CLIENT_ID: 'id', TAPDATA_CLIENT_SECRET: 'secret' });
-  await assert.rejects(api.verify(source), /authentication failed with HTTP 401/);
+  const result = await api.verify(source);
+  assert.equal(result.passed, false);
+  assert.match(result.error, /authentication failed with HTTP 401/);
+  assert.ok(result.comparisons.every(row => row.api === 'MISSING API FIELD/RECORD' || row.api === 'NOT APPLICABLE'));
 });
 
 test('CDC synchronization timeout returns a failed comparison after configured retries', async () => {
@@ -99,6 +112,56 @@ test('CDC synchronization timeout returns a failed comparison after configured r
   assert.equal(result.passed, false);
   assert.equal(result.timedOut, true);
   assert.equal(result.attempts, 3);
+});
+
+test('API verification reads fresh source values before and after each API comparison and pins the selected transaction', async () => {
+  const mocked = mockFetch(payload());
+  const reads = [];
+  const result = await verifier(mocked.fetch).verify(async selectedId => {
+    reads.push(selectedId);
+    return { ...source, latestTransactionId: source.transaction.id };
+  });
+  assert.equal(result.passed, true);
+  assert.deepEqual(reads, [null, source.transaction.id]);
+  assert.equal(result.transactionId, source.transaction.id);
+});
+
+test('source changes during API retrieval are discarded and retried with refreshed values and the same transaction ID', async () => {
+  let reads = 0;
+  let customerApiCalls = 0;
+  const fetchImpl = async input => {
+    const url = new URL(input);
+    if (url.pathname.endsWith('/MDM_CUSTOMER360')) {
+      customerApiCalls++;
+      const responseBalance = customerApiCalls === 1 ? 3381.32 : 3000;
+      return { ok: true, status: 200, json: async () => payload({ balance: responseBalance }).customers };
+    }
+    return { ok: true, status: 200, json: async () => payload().kyc };
+  };
+  const result = await verifier(fetchImpl).verify(async selectedId => {
+    reads++;
+    const current = reads === 1 ? source : { ...source, balance: '3000.00' };
+    return { ...current, latestTransactionId: source.transaction.id };
+  });
+  assert.equal(result.passed, true);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.transactionId, source.transaction.id);
+  assert.equal(customerApiCalls, 2);
+});
+
+test('a newer latest transaction appearing mid-run fails clearly without silently switching IDs', async () => {
+  const mocked = mockFetch(payload());
+  let reads = 0;
+  const newerId = 'RT-newer-transaction';
+  const result = await verifier(mocked.fetch).verify(async selectedId => {
+    reads++;
+    return { ...source, transaction: { ...source.transaction, id: selectedId || source.transaction.id },
+      latestTransactionId: reads === 1 ? source.transaction.id : newerId };
+  });
+  assert.equal(result.passed, false);
+  assert.equal(result.sourceChanged, true);
+  assert.equal(result.transactionId, source.transaction.id);
+  assert.match(result.error, /No transaction was silently substituted/);
 });
 
 test('decimal comparison preserves exact precision without floating point arithmetic', () => {

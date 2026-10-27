@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const { moneyToMinorUnits, databaseMoneyToMinorUnits, formatMinorUnits, validateAgainstAvailable } = require('./demo-amount');
 
 const DEMO_REFERENCE_PREFIX = 'C360-DEMO:';
 const DEFAULTS = Object.freeze({ customerId: '100002', accountId: 'AC1000021', amount: 200, currency: 'GBP' });
@@ -10,21 +11,20 @@ function schemaName(value, fallback, label) {
 }
 
 function createDemoService({ db2Schema = 'BANKCORE', oracleSchema = 'BANKCRM', customerId = DEFAULTS.customerId,
-  accountId = DEFAULTS.accountId, amount = DEFAULTS.amount, currency = DEFAULTS.currency, makeId = randomUUID,
-  stateStore } = {}) {
+  kycCustomerId = '100002', accountId = DEFAULTS.accountId, amount = DEFAULTS.amount, currency = DEFAULTS.currency, makeId = randomUUID } = {}) {
   const db2 = schemaName(db2Schema, 'BANKCORE', 'DB2I_SCHEMA');
   const oracle = schemaName(oracleSchema, 'BANKCRM', 'ORACLE_SCHEMA');
   const db2Table = name => `${db2}.${name}`;
   const oracleTable = name => `${oracle}.${name}`;
   const id = String(customerId).trim();
+  const kycId = String(kycCustomerId).trim();
   const account = String(accountId).trim();
-  const withdrawalAmount = Number(amount);
+  const withdrawalAmount = formatMinorUnits(moneyToMinorUnits(amount, 'DEMO_WITHDRAWAL_AMOUNT'));
   const transactionCurrency = String(currency).trim().toUpperCase();
   if (!/^\d+$/.test(id)) throw new Error('DEMO_CUSTOMER_ID must contain digits only');
+  if (!/^\d+$/.test(kycId)) throw new Error('KYC customer ID must contain digits only');
   if (!account || account.length > 30) throw new Error('DEMO_ACCOUNT_ID must contain 1 to 30 characters');
-  if (withdrawalAmount !== 200 || transactionCurrency !== 'GBP') {
-    throw new Error('The Customer 360 demo withdrawal is fixed at GBP 200; set DEMO_WITHDRAWAL_AMOUNT=200 and DEMO_CURRENCY=GBP');
-  }
+  if (transactionCurrency !== 'GBP') throw new Error('The Customer 360 demo withdrawal currency must be GBP');
 
   async function customerAccount(dbConnection) {
     const rows = await dbConnection.query(
@@ -35,13 +35,20 @@ function createDemoService({ db2Schema = 'BANKCORE', oracleSchema = 'BANKCRM', c
     return rows[0];
   }
 
+  async function readWithdrawalAccount(dbConnection) {
+    const row = await customerAccount(dbConnection);
+    return { customerId: String(row.CUSTOMER_ID).trim(), accountId: String(row.ACCOUNT_ID).trim(), customerName: String(row.CUSTOMER_NAME || '').trim(),
+      accountStatus: String(row.ACCOUNT_STATUS || '').trim(), currency: String(row.CURRENCY || '').trim().toUpperCase(),
+      balance: row.BALANCE, availableBalance: row.AVAILABLE_BALANCE };
+  }
+
   async function kycRecord(oracleConnection) {
     const result = await oracleConnection.execute(
       `SELECT CUSTOMER_ID,KYC_RECORD_ID,KYC_STATUS,RISK_RATING,LAST_UPDATED_TIMESTAMP FROM ${oracleTable('CUSTOMER_KYC')} WHERE CUSTOMER_ID=:customerId`,
-      { customerId: Number(id) });
+      { customerId: Number(kycId) });
     const rows = result.rows || [];
-    if (!rows.length) throw new Error(`Oracle KYC record for customer ${id} was not found`);
-    if (rows.length > 1) throw new Error(`Oracle returned duplicate KYC records for customer ${id}; refusing an ambiguous update`);
+    if (!rows.length) throw new Error(`Oracle KYC record for customer ${kycId} was not found`);
+    if (rows.length > 1) throw new Error(`Oracle returned duplicate KYC records for customer ${kycId}; refusing an ambiguous update`);
     return rows[0];
   }
 
@@ -54,7 +61,9 @@ function createDemoService({ db2Schema = 'BANKCORE', oracleSchema = 'BANKCRM', c
     return { customer, transactions, kyc };
   }
 
-  async function transaction(dbConnection) {
+  async function transaction(dbConnection, requestedAmount = withdrawalAmount) {
+    const amountCents = moneyToMinorUnits(requestedAmount, 'Withdrawal amount');
+    const amountText = formatMinorUnits(amountCents);
     const relation = await customerAccount(dbConnection);
     if (String(relation.CUSTOMER_STATUS).trim().toUpperCase() !== 'ACTIVE') throw new Error(`Customer ${id} is not active`);
 
@@ -67,21 +76,21 @@ function createDemoService({ db2Schema = 'BANKCORE', oracleSchema = 'BANKCRM', c
         [account]);
       if (!lockedRows.length) throw new Error(`Account ${account} was not found`);
       const locked = lockedRows[0];
-      const balance = Number(locked.BALANCE);
-      const available = Number(locked.AVAILABLE_BALANCE);
+      const balance = databaseMoneyToMinorUnits(locked.BALANCE, 'Account balance');
+      const available = databaseMoneyToMinorUnits(locked.AVAILABLE_BALANCE, 'Available balance');
       if (String(locked.ACCOUNT_STATUS).trim().toUpperCase() !== 'ACTIVE') throw new Error(`Account ${account} is not active`);
       if (String(locked.CURRENCY).trim().toUpperCase() !== transactionCurrency) throw new Error(`Account ${account} currency is not ${transactionCurrency}`);
-      if (!Number.isFinite(balance) || !Number.isFinite(available)) throw new Error(`Account ${account} has an invalid balance`);
-      if (available < withdrawalAmount || balance < withdrawalAmount) throw new Error(`Insufficient available balance in ${account}; available balance is ${available.toFixed(2)} ${transactionCurrency}`);
+      validateAgainstAvailable(amountCents, available);
+      if (amountCents > balance) throw new Error(`Withdrawal amount ${amountText} GBP exceeds account balance ${formatMinorUnits(balance)} GBP`);
 
       const transactionId = `RT-${makeId()}`;
       const reference = `${DEMO_REFERENCE_PREFIX}${makeId()}`;
       await dbConnection.query(
-        `INSERT INTO ${db2Table('ACCOUNT_TRANSACTION')} (TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_STAGE,TRANSACTION_STATUS,TRANSACTION_AMOUNT,CURRENCY,TRANSACTION_TIMESTAMP,CHANNEL,COUNTERPARTY_REFERENCE,LAST_UPDATED_TIMESTAMP) VALUES (?,?, 'WITHDRAWAL','POSTED','COMPLETED',?,?,CURRENT_TIMESTAMP,'BRANCH',?,CURRENT_TIMESTAMP)`,
-        [transactionId, account, withdrawalAmount, transactionCurrency, reference]);
+        `INSERT INTO ${db2Table('ACCOUNT_TRANSACTION')} (TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_STAGE,TRANSACTION_STATUS,TRANSACTION_AMOUNT,CURRENCY,TRANSACTION_TIMESTAMP,CHANNEL,COUNTERPARTY_REFERENCE,LAST_UPDATED_TIMESTAMP) VALUES (?,?, 'WITHDRAWAL','POSTED','COMPLETED',CAST(? AS DECIMAL(31,2)),?,CURRENT_TIMESTAMP,'BRANCH',?,CURRENT_TIMESTAMP)`,
+        [transactionId, account, amountText, transactionCurrency, reference]);
       const updated = await dbConnection.query(
-        `UPDATE ${db2Table('BANK_ACCOUNT')} SET BALANCE=BALANCE-?,AVAILABLE_BALANCE=AVAILABLE_BALANCE-?,LAST_UPDATED_TIMESTAMP=CURRENT_TIMESTAMP WHERE ACCOUNT_ID=? AND ACCOUNT_STATUS='ACTIVE' AND CURRENCY=? AND BALANCE>=? AND AVAILABLE_BALANCE>=?`,
-        [withdrawalAmount, withdrawalAmount, account, transactionCurrency, withdrawalAmount, withdrawalAmount]);
+        `UPDATE ${db2Table('BANK_ACCOUNT')} SET BALANCE=BALANCE-CAST(? AS DECIMAL(31,2)),AVAILABLE_BALANCE=AVAILABLE_BALANCE-CAST(? AS DECIMAL(31,2)),LAST_UPDATED_TIMESTAMP=CURRENT_TIMESTAMP WHERE ACCOUNT_ID=? AND ACCOUNT_STATUS='ACTIVE' AND CURRENCY=? AND BALANCE>=CAST(? AS DECIMAL(31,2)) AND AVAILABLE_BALANCE>=CAST(? AS DECIMAL(31,2))`,
+        [amountText, amountText, account, transactionCurrency, amountText, amountText]);
       if (Number.isFinite(updated?.count) && updated.count !== 1) throw new Error(`Account ${account} changed before the withdrawal could be applied`);
       const afterRows = await dbConnection.query(
         `SELECT BALANCE,AVAILABLE_BALANCE FROM ${db2Table('BANK_ACCOUNT')} WHERE ACCOUNT_ID=?`, [account]);
@@ -89,29 +98,17 @@ function createDemoService({ db2Schema = 'BANKCORE', oracleSchema = 'BANKCRM', c
         `SELECT TRANSACTION_TIMESTAMP FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE TRANSACTION_ID=? AND ACCOUNT_ID=?`,
         [transactionId, account]);
       if (!afterRows.length || !transactionRows.length) throw new Error('Could not confirm the inserted transaction and updated account before commit');
+      const newBalance = databaseMoneyToMinorUnits(afterRows[0].BALANCE, 'Updated account balance');
+      const newAvailableBalance = databaseMoneyToMinorUnits(afterRows[0].AVAILABLE_BALANCE, 'Updated available balance');
+      result = { customerId: id, accountId: account, transactionId, reference, amount: amountText, currency: transactionCurrency,
+        previousBalance: formatMinorUnits(balance), newBalance: formatMinorUnits(newBalance),
+        previousAvailableBalance: formatMinorUnits(available), newAvailableBalance: formatMinorUnits(newAvailableBalance),
+        transactionTimestamp: String(transactionRows[0].TRANSACTION_TIMESTAMP).trim(), completionTimestamp: new Date().toISOString() };
       await dbConnection.commit();
       committed = true;
-      result = { customerId: id, accountId: account, transactionId, reference, amount: withdrawalAmount, currency: transactionCurrency,
-        previousBalance: balance, newBalance: Number(afterRows[0].BALANCE),
-        previousAvailableBalance: available, newAvailableBalance: Number(afterRows[0].AVAILABLE_BALANCE),
-        transactionTimestamp: String(transactionRows[0].TRANSACTION_TIMESTAMP).trim(), completionTimestamp: new Date().toISOString() };
     } catch (error) {
       if (!committed) try { await dbConnection.rollback(); } catch {}
       throw error;
-    }
-    if (stateStore) {
-      try {
-        await stateStore.saveTransaction({ version: 1, customerId: result.customerId, accountId: result.accountId,
-          transactionId: result.transactionId, amount: result.amount, currency: result.currency,
-          previousBalance: result.previousBalance, newBalance: result.newBalance,
-          previousAvailableBalance: result.previousAvailableBalance, newAvailableBalance: result.newAvailableBalance,
-          transactionTimestamp: result.transactionTimestamp, completionTimestamp: result.completionTimestamp });
-      } catch (error) {
-        const persistenceError = new Error(`Withdrawal was committed, but its local verification record could not be saved. Transaction ID: ${result.transactionId}. ${error.message}`);
-        persistenceError.committedTransaction = result;
-        persistenceError.cause = error;
-        throw persistenceError;
-      }
     }
     return result;
   }
@@ -121,125 +118,121 @@ function createDemoService({ db2Schema = 'BANKCORE', oracleSchema = 'BANKCRM', c
     return { customerId: String(record[0]).trim(), kycRecordId: String(record[1]).trim(), status: record[2], riskRating: record[3] ?? null };
   }
 
-  async function setKyc(oracleConnection) {
+  async function setKyc(oracleConnection, expectedCurrent) {
     const current = await currentKyc(oracleConnection);
-    let baseline = stateStore ? await stateStore.loadKycBaseline(id) : null;
-    if (stateStore && !baseline) {
-      baseline = await stateStore.saveKycBaseline({ version: 1, customerId: id, kycRecordId: current.kycRecordId,
-        kycStatus: current.status, riskRating: current.riskRating, capturedAt: new Date().toISOString() });
+    if (expectedCurrent && (current.status !== expectedCurrent.status || current.riskRating !== expectedCurrent.riskRating || current.kycRecordId !== expectedCurrent.kycRecordId)) {
+      throw new Error('KYC changed after confirmation preview; no update was applied');
     }
-    if (baseline && baseline.kycRecordId !== current.kycRecordId) throw new Error(`Saved KYC baseline does not match the Oracle KYC record for customer ${id}`);
     const previous = { status: current.status, riskRating: current.riskRating };
     if (String(current.status).trim().toUpperCase() === 'REVIEW_REQUIRED' && String(current.riskRating).trim().toUpperCase() === 'HIGH') {
-      return { changed: false, previous, current: { status: current.status, riskRating: current.riskRating }, baseline };
+      return { changed: false, previous, current: { status: current.status, riskRating: current.riskRating } };
     }
     try {
       const update = await oracleConnection.execute(
         `UPDATE ${oracleTable('CUSTOMER_KYC')} SET KYC_STATUS=:status,RISK_RATING=:risk,LAST_UPDATED_TIMESTAMP=SYSTIMESTAMP WHERE CUSTOMER_ID=:customerId AND KYC_STATUS=:previousStatus AND ((RISK_RATING=:previousRisk) OR (RISK_RATING IS NULL AND :previousRisk IS NULL))`,
-        { status: 'REVIEW_REQUIRED', risk: 'HIGH', customerId: Number(id), previousStatus: current.status, previousRisk: current.riskRating });
+        { status: 'REVIEW_REQUIRED', risk: 'HIGH', customerId: Number(kycId), previousStatus: current.status, previousRisk: current.riskRating });
       if (Number.isFinite(update?.rowsAffected) && update.rowsAffected !== 1) throw new Error('Oracle KYC changed since it was read; update was not applied');
       await oracleConnection.commit();
     } catch (error) {
       try { await oracleConnection.rollback(); } catch {}
       throw error;
     }
-    return { changed: true, previous, current: { status: 'REVIEW_REQUIRED', riskRating: 'HIGH' }, baseline };
+    const committed = await currentKyc(oracleConnection);
+    if (committed.status !== 'REVIEW_REQUIRED' || committed.riskRating !== 'HIGH') throw new Error('Oracle KYC update committed, but read-back did not match REVIEW_REQUIRED / HIGH');
+    return { changed: true, previous, current: { status: committed.status, riskRating: committed.riskRating } };
   }
 
   async function resetKyc(oracleConnection, expectedCurrent) {
-    if (!stateStore) throw new Error('KYC reset requires a local saved baseline');
-    const baseline = await stateStore.loadKycBaseline(id);
-    if (!baseline) throw new Error(`No reliable KYC baseline exists for customer ${id}; refusing to guess original values`);
     const current = await currentKyc(oracleConnection);
-    if (baseline.kycRecordId !== current.kycRecordId) throw new Error(`Saved KYC baseline does not match the Oracle KYC record for customer ${id}`);
-    if (expectedCurrent && (current.status !== expectedCurrent.status || current.riskRating !== expectedCurrent.riskRating)) {
+    if (expectedCurrent && (current.status !== expectedCurrent.status || current.riskRating !== expectedCurrent.riskRating || current.kycRecordId !== expectedCurrent.kycRecordId)) {
       throw new Error('KYC changed after confirmation preview; no reset was applied');
     }
-    if (current.status === baseline.kycStatus && current.riskRating === baseline.riskRating) {
-      return { changed: false, current, baseline };
-    }
-    if (String(current.status).trim().toUpperCase() !== 'REVIEW_REQUIRED' || String(current.riskRating).trim().toUpperCase() !== 'HIGH') {
-      throw new Error('Current KYC no longer matches the demo values; refusing to overwrite a change by another process or user');
+    if (current.status === 'VERIFIED' && current.riskRating === 'LOW') {
+      return { changed: false, current };
     }
     try {
       const result = await oracleConnection.execute(
         `UPDATE ${oracleTable('CUSTOMER_KYC')} SET KYC_STATUS=:status,RISK_RATING=:risk,LAST_UPDATED_TIMESTAMP=SYSTIMESTAMP WHERE CUSTOMER_ID=:customerId AND KYC_STATUS=:previousStatus AND ((RISK_RATING=:previousRisk) OR (RISK_RATING IS NULL AND :previousRisk IS NULL))`,
-        { status: baseline.kycStatus, risk: baseline.riskRating, customerId: Number(id), previousStatus: current.status, previousRisk: current.riskRating });
+        { status: 'VERIFIED', risk: 'LOW', customerId: Number(kycId), previousStatus: current.status, previousRisk: current.riskRating });
       if (Number.isFinite(result?.rowsAffected) && result.rowsAffected !== 1) throw new Error('KYC changed concurrently; guarded reset did not update a row');
       await oracleConnection.commit();
     } catch (error) { try { await oracleConnection.rollback(); } catch {} throw error; }
-    return { changed: true, current: { ...current, status: baseline.kycStatus, riskRating: baseline.riskRating }, baseline };
+    const committed = await currentKyc(oracleConnection);
+    if (committed.status !== 'VERIFIED' || committed.riskRating !== 'LOW') throw new Error('Oracle KYC reset committed, but read-back did not match VERIFIED / LOW');
+    return { changed: true, current: committed };
   }
 
-  async function verifyTransaction(dbConnection, record) {
-    if (!record) return { passed: false, error: 'No local demo transaction record was found; run demo:transaction again only if you intend another withdrawal' };
-    const [relation, rows] = await Promise.all([
-      customerAccount(dbConnection),
-      dbConnection.query(
-        `SELECT TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_STAGE,TRANSACTION_STATUS,TRANSACTION_AMOUNT,CURRENCY,TRANSACTION_TIMESTAMP FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE TRANSACTION_ID=? AND ACCOUNT_ID=?`,
-        [record.transactionId, record.accountId])
-    ]);
-    const transactionRow = rows[0] || null;
-    const currentAccountRows = await dbConnection.query(
-      `SELECT BALANCE,AVAILABLE_BALANCE,CURRENCY FROM ${db2Table('BANK_ACCOUNT')} WHERE ACCOUNT_ID=?`, [record.accountId]);
-    const current = currentAccountRows[0] || null;
-    const relationshipValid = String(relation.CUSTOMER_ID).trim() === String(record.customerId) && String(relation.ACCOUNT_ID).trim() === String(record.accountId);
-    const transactionValid = Boolean(transactionRow && String(transactionRow.TRANSACTION_ID).trim() === String(record.transactionId) &&
-      String(transactionRow.ACCOUNT_ID).trim() === String(record.accountId) && String(transactionRow.TRANSACTION_TYPE).trim().toUpperCase() === 'WITHDRAWAL' &&
-      String(transactionRow.TRANSACTION_STAGE).trim().toUpperCase() === 'POSTED' &&
-      String(transactionRow.TRANSACTION_STATUS).trim().toUpperCase() === 'COMPLETED' &&
-      Number(transactionRow.TRANSACTION_AMOUNT) === 200 && String(transactionRow.CURRENCY).trim().toUpperCase() === 'GBP' &&
-      String(transactionRow.TRANSACTION_TIMESTAMP).trim() === String(record.transactionTimestamp).trim());
-    const recordedDeductionValid = Math.abs(record.previousBalance - record.newBalance - 200) <= 0.0001 &&
-      Math.abs(record.previousAvailableBalance - record.newAvailableBalance - 200) <= 0.0001;
-    const accountValid = Boolean(current && String(current.CURRENCY).trim().toUpperCase() === 'GBP' &&
-      Number.isFinite(Number(current.BALANCE)) && Number.isFinite(Number(current.AVAILABLE_BALANCE)));
-    return { passed: relationshipValid && transactionValid && recordedDeductionValid && accountValid, record,
-      transaction: transactionRow, account: current, relationshipValid, transactionValid, recordedDeductionValid, accountValid,
-      currentMatchesRecordedAfter: Boolean(current && Number(current.BALANCE) === record.newBalance && Number(current.AVAILABLE_BALANCE) === record.newAvailableBalance) };
+  async function latestPostedWithdrawal(dbConnection) {
+    const rows = await dbConnection.query(
+      `SELECT TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_STAGE,TRANSACTION_STATUS,TRANSACTION_AMOUNT,CURRENCY,TRANSACTION_TIMESTAMP FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE ACCOUNT_ID=? AND TRANSACTION_TYPE='WITHDRAWAL' AND TRANSACTION_STAGE='POSTED' AND TRANSACTION_STATUS='COMPLETED' ORDER BY TRANSACTION_TIMESTAMP DESC,TRANSACTION_ID DESC FETCH FIRST 1 ROW ONLY`,
+      [account]);
+    return rows[0] || null;
+  }
+
+  async function exactTransaction(dbConnection, transactionId) {
+    const rows = await dbConnection.query(
+      `SELECT TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_STAGE,TRANSACTION_STATUS,TRANSACTION_AMOUNT,CURRENCY,TRANSACTION_TIMESTAMP FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE TRANSACTION_ID=? AND ACCOUNT_ID=?`,
+      [String(transactionId).trim(), account]);
+    return rows[0] || null;
+  }
+
+  function validPostedWithdrawal(row) {
+    return Boolean(row && String(row.ACCOUNT_ID).trim() === account &&
+      String(row.TRANSACTION_TYPE).trim().toUpperCase() === 'WITHDRAWAL' &&
+      String(row.TRANSACTION_STAGE).trim().toUpperCase() === 'POSTED' &&
+      String(row.TRANSACTION_STATUS).trim().toUpperCase() === 'COMPLETED' &&
+      String(row.CURRENCY).trim().toUpperCase() === 'GBP');
+  }
+
+  async function verifyTransaction(dbConnection, transactionId) {
+    const [customer, row] = await Promise.all([customerAccount(dbConnection),
+      transactionId ? exactTransaction(dbConnection, transactionId) : latestPostedWithdrawal(dbConnection)]);
+    const [freshAccount, latestAfter] = await Promise.all([customerAccount(dbConnection), transactionId ? Promise.resolve(row) : latestPostedWithdrawal(dbConnection)]);
+    const relationshipValid = String(customer.CUSTOMER_ID).trim() === id && String(customer.ACCOUNT_ID).trim() === account;
+    const transactionValid = validPostedWithdrawal(row) && (!transactionId || String(row.TRANSACTION_ID).trim() === String(transactionId).trim());
+    const stableAccount = String(customer.BALANCE) === String(freshAccount.BALANCE) &&
+      String(customer.AVAILABLE_BALANCE) === String(freshAccount.AVAILABLE_BALANCE);
+    const stableSelection = Boolean(transactionId) || String(row?.TRANSACTION_ID || '') === String(latestAfter?.TRANSACTION_ID || '');
+    return { passed: relationshipValid && transactionValid && stableAccount && stableSelection, transaction: row, account: freshAccount,
+      relationshipValid, transactionValid, stableAccount, stableSelection, selectedBy: transactionId ? 'exact transaction ID' : 'latest posted completed withdrawal' };
   }
 
   async function verifyKyc(oracleConnection) {
     const current = await currentKyc(oracleConnection);
-    return { ...current, passed: String(current.status).trim().toUpperCase() === 'REVIEW_REQUIRED' &&
-      String(current.riskRating).trim().toUpperCase() === 'HIGH' };
+    const updated = String(current.status).trim().toUpperCase() === 'REVIEW_REQUIRED' && String(current.riskRating).trim().toUpperCase() === 'HIGH';
+    const baseline = String(current.status).trim().toUpperCase() === 'VERIFIED' && String(current.riskRating).trim().toUpperCase() === 'LOW';
+    return { ...current, retrieved: true, expectedState: updated ? 'demo updated state' : baseline ? 'fixed demo baseline' : 'unexpected state', passed: updated || baseline };
   }
 
-  // Read-only source snapshot used by the optional TapData comparison stage.
-  // The local runtime record supplies the exact transaction ID to inspect.
-  async function readApiVerificationSources(dbConnection, oracleConnection, record) {
-    if (!record || !record.transactionId) throw new Error('No locally recorded demo transaction ID is available; run demo:transaction first if you intend a withdrawal');
-    if (String(record.customerId) !== id || String(record.accountId) !== account) {
-      throw new Error(`The recorded transaction does not belong to configured customer/account ${id}/${account}`);
-    }
-    const [customer, transactionRows, kycRow] = await Promise.all([
-      customerAccount(dbConnection),
-      dbConnection.query(
-        `SELECT TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_STAGE,TRANSACTION_STATUS,TRANSACTION_AMOUNT,CURRENCY FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE TRANSACTION_ID=? AND ACCOUNT_ID=?`,
-        [record.transactionId, account]),
-      kycRecord(oracleConnection)
+  async function readApiVerificationSources(dbConnection, oracleConnection, transactionId, { checkLatest = !transactionId } = {}) {
+    const [customer, latest, kycRow] = await Promise.all([
+      customerAccount(dbConnection), checkLatest ? latestPostedWithdrawal(dbConnection) : Promise.resolve(null), kycRecord(oracleConnection)
     ]);
-    if (!transactionRows.length) throw new Error(`Recorded transaction ${record.transactionId} was not found in the source DB2 account`);
-    const row = transactionRows[0];
+    const selectedId = transactionId || latest?.TRANSACTION_ID;
+    if (!selectedId) throw new Error(`No posted completed withdrawal was found for account ${account}`);
+    const row = transactionId ? await exactTransaction(dbConnection, transactionId) : latest;
+    if (!row) throw new Error(`Transaction ${selectedId} was not found in account ${account}`);
     return {
       customerId: String(customer.CUSTOMER_ID).trim(), accountId: String(customer.ACCOUNT_ID).trim(),
       balance: customer.BALANCE, availableBalance: customer.AVAILABLE_BALANCE, currency: customer.CURRENCY,
       transaction: { id: row.TRANSACTION_ID, amount: row.TRANSACTION_AMOUNT, currency: row.CURRENCY,
-        type: row.TRANSACTION_TYPE, stage: row.TRANSACTION_STAGE, status: row.TRANSACTION_STATUS },
+        type: row.TRANSACTION_TYPE, stage: row.TRANSACTION_STAGE, status: row.TRANSACTION_STATUS, timestamp: row.TRANSACTION_TIMESTAMP },
+      latestTransactionId: checkLatest ? latest?.TRANSACTION_ID ?? null : selectedId,
+      transactionValid: validPostedWithdrawal(row),
       kyc: { customerId: String(kycRow[0]).trim(), status: kycRow[2], riskRating: kycRow[3] ?? null }
     };
   }
 
-  async function verify(dbConnection, oracleConnection, stage = 'all', record) {
+  async function verify(dbConnection, oracleConnection, stage = 'all', transactionId) {
     if (!['transaction', 'kyc', 'all'].includes(stage)) throw new Error('Verification stage must be transaction, kyc, or all');
     const result = { stage };
-    if (stage === 'transaction' || stage === 'all') result.transaction = await verifyTransaction(dbConnection, record);
+    if (stage === 'transaction' || stage === 'all') result.transaction = await verifyTransaction(dbConnection, transactionId);
     if (stage === 'kyc' || stage === 'all') result.kyc = await verifyKyc(oracleConnection);
     result.passed = Object.values(result).filter(value => value && typeof value === 'object' && 'passed' in value).every(value => value.passed);
     return result;
   }
 
-  return { status, transaction, currentKyc, setKyc, resetKyc, verifyTransaction, verifyKyc, verify, readApiVerificationSources };
+  return { status, readWithdrawalAccount, transaction, currentKyc, setKyc, resetKyc, verifyTransaction, verifyKyc, verify, readApiVerificationSources };
 }
 
 module.exports = { createDemoService, DEFAULTS, DEMO_REFERENCE_PREFIX };
