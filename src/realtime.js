@@ -1,7 +1,14 @@
 const crypto = require('node:crypto');
-const { config } = require('./config');
 const { runSchedule } = require('./scheduler');
 const { createExecutionSummary, printExecutionSummary } = require('./execution-summary');
+function createRealtimeService(settings, { signal, log = console.log, progress = () => {}, coordinate = action => action(),
+  stopOnError = false, formatError = error => error.message, onIntent = async () => {}, detailedEvents = false } = {}) {
+const config = structuredClone(settings);
+config.retryLimit ??= 5;
+for (const schema of [config.db2.schema || 'BANKCORE', config.oracle.schema]) {
+  if (typeof schema !== 'string' || !/^[A-Za-z][A-Za-z0-9_$#]*$/.test(schema)) throw new Error('Invalid realtime schema');
+}
+const stopping = () => Boolean(signal?.aborted);
 const DB2_SCHEMA = (config.db2.schema || 'BANKCORE').toUpperCase();
 const db2Table = name => `${DB2_SCHEMA}.${name}`;
 const pick = values => values[crypto.randomInt(values.length)];
@@ -38,7 +45,7 @@ async function retry(label, operation) {
     catch(error) {
       if(attempt>=config.retryLimit || !retryable(error)) throw error;
       const delay=Math.min(1000*2**attempt,10000);
-      console.warn(`${label} failed; retry ${attempt+1}/${config.retryLimit} in ${delay}ms`);
+      log(`${label} failed; retry ${attempt+1}/${config.retryLimit} in ${delay}ms`);
       await pause(delay);
     }
   }
@@ -62,10 +69,10 @@ async function addTransaction(db2, event, summary) {
         throw error;
       }
     });
-    if (result.inserted) summary?.recordSuccess({ schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'INSERT',key:event.eventKey,rows:result.count });
+    if (result.inserted) summary?.recordSuccess({ schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'INSERT',key:event.eventKey,rows:result.count });
     return result.inserted;
   } catch(error) {
-    recordFailure(summary,error,{schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'INSERT'});
+    recordFailure(summary,error,{schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'INSERT'});
     throw error;
   }
 }
@@ -81,28 +88,28 @@ async function resolveTransaction(db2,event,summary) {
       try {
         let rows;
         try { rows=await db2.query(`SELECT TRANSACTION_STATUS,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_AMOUNT,CURRENCY FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE TRANSACTION_ID=? FOR UPDATE`,[event.transactionId]); }
-        catch(error) { error.summaryOperation={schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'SELECT'}; throw error; }
+        catch(error) { error.summaryOperation={schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'SELECT'}; throw error; }
         if(!rows.length || rows[0].TRANSACTION_STATUS!=='PENDING') { await db2.commit(); return 0; }
         const makeFailed=event.type!=='DEPOSIT' && pick([true,false]);
         if(makeFailed) {
-          const write={schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'UPDATE',key:`${event.transactionId}:status:FAILED`,rows:0};
+          const write={schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'UPDATE',key:`${event.transactionId}:status:FAILED`,rows:0};
           stagedWrites.push(write);
           write.rows=rowsAffected(await db2.query(`UPDATE ${db2Table('ACCOUNT_TRANSACTION')} SET TRANSACTION_STATUS='REJECTED',LAST_UPDATED_TIMESTAMP=CURRENT_TIMESTAMP WHERE TRANSACTION_ID=? AND TRANSACTION_STATUS='PENDING'`,[event.transactionId]));
         } else {
           const delta=event.type==='DEPOSIT'?event.amount:-event.amount;
           let balanceRows;
           try { balanceRows=await db2.query(`SELECT BALANCE,AVAILABLE_BALANCE FROM ${db2Table('BANK_ACCOUNT')} WHERE ACCOUNT_ID=? FOR UPDATE`,[event.accountId]); }
-          catch(error) { error.summaryOperation={schema:'BANKCORE',table:'BANK_ACCOUNT',operation:'SELECT'}; throw error; }
+          catch(error) { error.summaryOperation={schema:DB2_SCHEMA,table:'BANK_ACCOUNT',operation:'SELECT'}; throw error; }
           if(!balanceRows.length) throw new Error(`Account ${event.accountId} was not found`);
           if(delta<0 && !config.overdraft && (Number(balanceRows[0].BALANCE)<event.amount || Number(balanceRows[0].AVAILABLE_BALANCE)<event.amount)) {
-            const write={schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'UPDATE',key:`${event.transactionId}:status:FAILED`,rows:0};
+            const write={schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'UPDATE',key:`${event.transactionId}:status:FAILED`,rows:0};
             stagedWrites.push(write);
             write.rows=rowsAffected(await db2.query(`UPDATE ${db2Table('ACCOUNT_TRANSACTION')} SET TRANSACTION_STATUS='REJECTED',LAST_UPDATED_TIMESTAMP=CURRENT_TIMESTAMP WHERE TRANSACTION_ID=? AND TRANSACTION_STATUS='PENDING'`,[event.transactionId]));
           } else {
-            const accountWrite={schema:'BANKCORE',table:'BANK_ACCOUNT',operation:'UPDATE',key:`${event.transactionId}:account:${event.accountId}`,rows:0};
+            const accountWrite={schema:DB2_SCHEMA,table:'BANK_ACCOUNT',operation:'UPDATE',key:`${event.transactionId}:account:${event.accountId}`,rows:0};
             stagedWrites.push(accountWrite);
             accountWrite.rows=rowsAffected(await db2.query(`UPDATE ${db2Table('BANK_ACCOUNT')} SET BALANCE=BALANCE+?, AVAILABLE_BALANCE=AVAILABLE_BALANCE+?, LAST_UPDATED_TIMESTAMP=CURRENT_TIMESTAMP WHERE ACCOUNT_ID=?`,[delta,delta,event.accountId]));
-            const statusWrite={schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'UPDATE',key:`${event.transactionId}:status:COMPLETED`,rows:0};
+            const statusWrite={schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'UPDATE',key:`${event.transactionId}:status:COMPLETED`,rows:0};
             stagedWrites.push(statusWrite);
             statusWrite.rows=rowsAffected(await db2.query(`UPDATE ${db2Table('ACCOUNT_TRANSACTION')} SET TRANSACTION_STATUS='COMPLETED',TRANSACTION_STAGE='POSTED',LAST_UPDATED_TIMESTAMP=CURRENT_TIMESTAMP WHERE TRANSACTION_ID=? AND TRANSACTION_STATUS='PENDING'`,[event.transactionId]));
           }
@@ -113,7 +120,7 @@ async function resolveTransaction(db2,event,summary) {
       } catch(error) { try{await db2.rollback();}catch{} throw error; }
     });
   } catch(error) {
-    const writes=stagedWrites.length ? stagedWrites : [error.summaryOperation || {schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'BEGIN'}];
+    const writes=stagedWrites.length ? stagedWrites : [error.summaryOperation || {schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'BEGIN'}];
     if (summary && !error.summaryFailureRecorded) {
       for(const write of writes) summary.recordFailure({...write,error});
       error.summaryFailureRecorded=true;
@@ -155,16 +162,18 @@ async function updateOracle(oracle,customer,customerProfileId,eventKey,summary) 
 async function recoverPending(db2,summary) {
   let rows;
   try { rows=await db2.query(`SELECT TRANSACTION_ID,ACCOUNT_ID,TRANSACTION_TYPE,TRANSACTION_AMOUNT,CURRENCY,COUNTERPARTY_REFERENCE FROM ${db2Table('ACCOUNT_TRANSACTION')} WHERE TRANSACTION_STATUS='PENDING' ORDER BY TRANSACTION_TIMESTAMP FETCH FIRST 1 ROW ONLY`); }
-  catch(error) { recordFailure(summary,error,{schema:'BANKCORE',table:'ACCOUNT_TRANSACTION',operation:'SELECT'}); throw error; }
+  catch(error) { recordFailure(summary,error,{schema:DB2_SCHEMA,table:'ACCOUNT_TRANSACTION',operation:'SELECT'}); throw error; }
   if(!rows.length) return 0;
   const row=rows[0];
+  await onIntent({ kind:'recovery', transactionId:String(row.TRANSACTION_ID).trim(), accountId:String(row.ACCOUNT_ID).trim() });
+  if (detailedEvents) log(`Recovering pending transaction ${String(row.TRANSACTION_ID).trim()}`);
   return resolveTransaction(db2,{transactionId:String(row.TRANSACTION_ID).trim(),eventKey:String(row.COUNTERPARTY_REFERENCE || '').trim(),accountId:String(row.ACCOUNT_ID).trim(),type:String(row.TRANSACTION_TYPE).trim(),amount:Number(row.TRANSACTION_AMOUNT),currency:String(row.CURRENCY).trim()},summary);
 }
 
 async function loadWorkloadRecords(db2,oracle,summary) {
   let dbRows;
   try { dbRows=await db2.query(`SELECT C.CUSTOMER_ID,A.ACCOUNT_ID,A.CURRENCY FROM ${db2Table('CUSTOMER')} C JOIN ${db2Table('ACCOUNT_CUSTOMER_RELATIONSHIP')} R ON R.CUSTOMER_ID=C.CUSTOMER_ID JOIN ${db2Table('BANK_ACCOUNT')} A ON A.ACCOUNT_ID=R.ACCOUNT_ID WHERE C.CUSTOMER_STATUS='ACTIVE' AND A.ACCOUNT_STATUS='ACTIVE'`); }
-  catch(error) { recordFailure(summary,error,{schema:'BANKCORE',table:'CUSTOMER/BANK_ACCOUNT',operation:'SELECT'}); throw error; }
+  catch(error) { recordFailure(summary,error,{schema:DB2_SCHEMA,table:'CUSTOMER/BANK_ACCOUNT',operation:'SELECT'}); throw error; }
   let oracleResult;
   try { oracleResult=await oracle.execute(`SELECT CUSTOMER_ID,CUSTOMER_PROFILE_ID FROM ${config.oracle.schema}.CUSTOMER_PROFILE`); }
   catch(error) { recordFailure(summary,error,{schema:config.oracle.schema,table:'CUSTOMER_PROFILE',operation:'SELECT'}); throw error; }
@@ -185,25 +194,38 @@ async function cycle(db2,oracle,records,summary) {
   const type=pick(['DEPOSIT','WITHDRAWAL','CARD_PURCHASE','BILL_PAYMENT']);
   const eventKey=`RT-${crypto.randomUUID()}`;
   const event={transactionId:eventKey,eventKey,customer,accountId,type,currency,amount:money(),channel:pick(['MOBILE','WEB','ATM','BRANCH'])};
+  await onIntent({ kind:'generation', transactionId:event.transactionId, eventKey, accountId, customer, customerProfileId });
+  if (detailedEvents) log(`Generated transaction ${event.transactionId} customer=${customer} account=${accountId}`);
   await addTransaction(db2,event,summary);
   await resolveTransaction(db2,event,summary);
   await updateOracle(oracle,customer,customerProfileId,event.eventKey,summary);
-  console.log(`${new Date().toISOString()} event=${event.eventKey} transaction=${event.transactionId} customer=${customer} account=${accountId} ${type} ${event.amount} ${currency}`);
+  log(`${new Date().toISOString()} event=${event.eventKey} transaction=${event.transactionId} customer=${customer} account=${accountId} ${type} ${event.amount} ${currency}`);
 }
 
 async function realtime(db2,oracle,options={}) {
-  const summary=createExecutionSummary({oracleSchema:config.oracle.schema,intervalMs:options.intervalMs ?? 15_000});
+  const summary=createExecutionSummary({db2Schema:DB2_SCHEMA,formatError,oracleSchema:config.oracle.schema,intervalMs:options.intervalMs ?? 15_000,
+    onSuccess: row => { if (detailedEvents) log(`Source ${row.schema}.${row.table} ${row.operation} rows=${row.rows}`); progress(summary); } });
   try {
+    progress(summary);
     const records=await loadWorkloadRecords(db2,oracle,summary);
-    console.log('Real-time workload started. Ctrl+C to stop.');
+    log('Real-time workload started. Ctrl+C to stop.');
+    const deadline = Date.now() + (options.durationMs ?? Infinity);
     await runSchedule({
       durationMs:options.durationMs ?? Infinity,
       intervalMs:options.intervalMs ?? 15_000,
       eventsPerCycle:options.eventsPerCycle ?? 1,
       summary,
-      runCycle:()=>cycle(db2,oracle,records,summary),
-      shouldStop:()=>Boolean(global.stopping),
-      sleep:async ms=>{let remaining=ms; while(remaining>0&&!global.stopping){const chunk=Math.min(remaining,250);await pause(chunk);remaining-=chunk;}}
+      runCycle:async()=> {
+        try { return await coordinate(async () => {
+          if (stopping() || Date.now() >= deadline) return false;
+          await cycle(db2,oracle,records,summary);
+          return true;
+        }, summary); }
+        finally { progress(summary); }
+      },
+      log, stopOnError, formatError, onProgress:progress,
+      shouldStop:stopping,
+      sleep:async ms=>{let remaining=ms; while(remaining>0&&!stopping()){const chunk=Math.min(remaining,250);await pause(chunk);remaining-=chunk;}}
     });
   } catch(error) {
     if (!error.summaryFailureRecorded) recordFailure(summary,error,{schema:'FEEDER',table:'WORKLOAD',operation:'START'});
@@ -211,9 +233,15 @@ async function realtime(db2,oracle,options={}) {
     throw error;
   } finally {
     summary.elapsedMs=Date.now()-summary.startedAt;
-    printExecutionSummary(summary);
+    progress(summary);
+    printExecutionSummary(summary,log);
   }
   return summary;
 }
 
-module.exports={realtime,cycle,resolveTransaction,addTransaction,updateOracle,loadWorkloadRecords};
+return {realtime,cycle,resolveTransaction,addTransaction,updateOracle,loadWorkloadRecords};
+}
+
+// Backward-compatible local helpers; hosted callers use only the explicit factory.
+const local = name => (...args) => createRealtimeService(require('./config').config)[name](...args);
+module.exports={createRealtimeService, ...Object.fromEntries(['realtime','cycle','resolveTransaction','addTransaction','updateOracle','loadWorkloadRecords'].map(name=>[name,local(name)]))};

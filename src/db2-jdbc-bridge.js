@@ -26,7 +26,9 @@ class Db2JdbcBridge {
     this.child.stdout.setEncoding('utf8');
     this.child.stderr.setEncoding('utf8');
     this.child.stdout.on('data', chunk => this.receive(chunk));
-    this.child.stderr.on('data', chunk => process.stderr.write(`[Db2 JDBC] ${chunk}`));
+    this.child.stderr.on('data', chunk => {
+      if (!this.config.suppressDiagnostics) process.stderr.write(`[Db2 JDBC] ${chunk}`);
+    });
     this.child.on('error', error => this.rejectPending(error));
     this.child.on('exit', code => {
       if (this.pending.size) this.rejectPending(new Error(`Db2 JDBC bridge exited with code ${code}`));

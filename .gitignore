@@ -18,6 +18,9 @@ target/
 out/
 *.swp
 *.bak
+*.tgz
+*.pem
+*.key
 
 # Local operating system and editor files
 .DS_Store

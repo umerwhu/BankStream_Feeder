@@ -1,4 +1,3 @@
-const oracledb = require('oracledb');
 const fs = require('node:fs');
 const { connectDb2Jdbc } = require('./db2-jdbc-bridge');
 const odbcValue = value => `{${String(value).replace(/}/g, '}}')}}`;
@@ -17,16 +16,22 @@ async function connectDb2(config) {
       jdbcJar: config.db2.jdbcJar,
       jdbcUrl: config.db2.jdbcUrl || `jdbc:as400://${config.db2.host};libraries=${config.db2.schema};`,
       javaCommand: config.db2.javaCommand,
+      suppressDiagnostics: config.db2.suppressDiagnostics === true,
       user: config.db2.user,
       password: config.db2.password
     });
   }
   // The native ODBC binding is required only for DSN/ODBC connections. Keep
   // it out of the JDBC path so macOS users with JT400 do not need unixODBC.
-  const odbc = require('odbc');
+  let odbc;
+  try { odbc = require('odbc'); }
+  catch { throw new Error('ODBC runtime unavailable. Install the optional odbc package and the platform IBM i ODBC/system-driver prerequisites; run npm run doctor.'); }
   return odbc.connect(db2ConnectionString(config));
 }
 async function connectOracle(config) {
+  let oracledb;
+  try { oracledb = require('oracledb'); }
+  catch { throw new Error('Oracle runtime unavailable. Install the optional oracledb package (npm ci --include=optional); run npm run doctor.'); }
   return oracledb.getConnection({ user: config.oracle.user, password: config.oracle.password, connectString: config.oracle.connectString });
 }
 async function connect(config) {

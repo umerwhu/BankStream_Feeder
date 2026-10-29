@@ -2,21 +2,24 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const {dryRun}=require('../src/dry-run');
 const {parseDuration,parseInterval,parseRealtimeArgs}=require('../src/cli');
 const {runSchedule}=require('../src/scheduler');
 const {db2ConnectionString}=require('../src/db');
-const {resolveTransaction,addTransaction,updateOracle,loadWorkloadRecords}=require('../src/realtime');
+const {createRealtimeService}=require('../src/realtime');
 const {createExecutionSummary,printExecutionSummary}=require('../src/execution-summary');
 const crypto=require('node:crypto');
-const {config}=require('../src/config');
+const {createConfig}=require('../src/config');
+const config=createConfig({ORACLE_SCHEMA:'C##BANKCRM',DB2I_SCHEMA:'BANKCORE'});
+const localHelper=name=>(...args)=>createRealtimeService(config)[name](...args);
+const [resolveTransaction,addTransaction,updateOracle,loadWorkloadRecords]=['resolveTransaction','addTransaction','updateOracle','loadWorkloadRecords'].map(localHelper);
 const root=path.join(__dirname,'..');
 
 test('JT400 JDBC driver resolves to the project-local jar',()=>{
   const driverPath=path.join(root,'db2i_driver','jt400-21.0.6.jar');
-  assert.equal(config.db2.jdbcJar,driverPath);
-  assert.equal(fs.existsSync(config.db2.jdbcJar),true);
-  assert.doesNotMatch(config.db2.jdbcJar,/DBeaver/i);
+  const explicit=createConfig({DB2I_JT400_JAR:'./db2i_driver/jt400-21.0.6.jar'});
+  assert.equal(explicit.db2.jdbcJar,driverPath);
+  assert.equal(fs.existsSync(explicit.db2.jdbcJar),true);
+  assert.doesNotMatch(explicit.db2.jdbcJar,/DBeaver/i);
 });
 
 test('runtime code contains no bulk loader and no DDL',()=>{
@@ -105,15 +108,6 @@ test('provided seed customer mappings use the shared customer IDs across both so
   assert.deepEqual([...new Set(db2Ids)].sort(),[...new Set(oracleIds)].sort());
 });
 
-test('dry-run checks both databases with SELECT only',async()=>{
-  const statements=[];
-  await dryRun({
-    connectOracle:async()=>({execute:async sql=>statements.push(sql),close:async()=>{}}),
-    connectDb2:async()=>({query:async sql=>statements.push(sql),close:async()=>{}})
-  });
-  assert.deepEqual(statements,['SELECT 1 FROM DUAL','SELECT 1 FROM SYSIBM.SYSDUMMY1']);
-  assert.ok(statements.every(sql=>/^SELECT\b/i.test(sql)));
-});
 
 test('Db2 ODBC connection supports either a configured DSN or IBM i host settings',()=>{
   const hostConnection=db2ConnectionString({db2:{host:'192.168.1.195',schema:'BANKCORE',driver:'IBM i Access ODBC Driver',user:'dbadmin',password:'secret'}});

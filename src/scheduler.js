@@ -1,22 +1,27 @@
 async function runSchedule({ durationMs, intervalMs, eventsPerCycle, runCycle, summary, shouldStop = () => false, log = console.log,
-  now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), stopOnError = false, formatError = error => error.message, onProgress = () => {} }) {
   const startedAt = now();
   const deadline = durationMs === Infinity ? Infinity : startedAt + durationMs;
 
   while (!shouldStop() && now() < deadline) {
     const cycleStartedAt = now();
     summary.cycles++;
+    let completedEvents = 0;
     for (let index = 0; index < eventsPerCycle && !shouldStop() && now() < deadline; index++) {
       try {
-        await runCycle();
+        const executed = await runCycle();
+        if (executed !== false) completedEvents++;
       } catch (error) {
         if (!error.summaryFailureRecorded) {
           summary.recordFailure({ schema: 'FEEDER', table: 'WORKLOAD_CYCLE', operation: 'PROCESS', error });
           error.summaryFailureRecorded = true;
         }
-        log(`Event failed: ${error.message}`);
+        log(`Event failed: ${formatError(error)}`);
+        if (stopOnError) throw error;
       }
     }
+    if (completedEvents === eventsPerCycle) summary.completedCycles = (summary.completedCycles || 0) + 1;
+    onProgress(summary);
     if (shouldStop() || now() >= deadline) break;
     const nextCycleAt = Math.min(Math.max(cycleStartedAt + intervalMs, now()), deadline);
     const elapsedMs = now() - startedAt;

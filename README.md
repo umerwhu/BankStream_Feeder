@@ -1,82 +1,109 @@
 # BankStream Feeder
 
-BankStream Feeder simulates real-time banking activity by continuously inserting new records and updating existing data in Oracle and IBM i (AS400) databases. These changes can be captured by TapData using real-time Change Data Capture (CDC), enabling live data integration and updates for the BankStream AI Dashboard demo.
+BankStream Feeder generates banking transactions and customer updates in IBM i (AS400/DB2) and Oracle source databases for a Customer 360 demo. TapData independently captures these changes through Change Data Capture (CDC), keeping the demo's downstream customer views up to date.
 
-## Tables changed by the feeder
+Partners use the CLI to request operations from a Hosted Service. The service holds the database credentials and executes the existing Feeder logic using each authenticated partner's assigned configuration.
 
-**DB2i / AS400**
+The Feeder generates source database changes. It does **not** configure or manage TapData tasks, FDM, MDM, or data pipelines; those are operated separately in TapData.
 
-- `ACCOUNT_TRANSACTION` — insert and update
-- `BANK_ACCOUNT` — update
+## Quick installation
 
-**Oracle**
+Use Node.js 24, the validated baseline, and npm. Obtain your Hosted Service HTTPS URL and API token from the service operator.
 
-- `CUSTOMER_PROFILE` — update
-- `CUSTOMER_KYC` — update
-- `CUSTOMER_INTERACTIONS` — insert
-- `CUSTOMER_OFFERS` — update
-
-## Prerequisites
-
-- Node.js 20 or later and npm.
-- Reachable Oracle and IBM i Db2 databases, with matching customer/account demo records already loaded.
-- Runtime database users with read and write access to the required tables.
-- Java 11 or later for the included JT400 driver used by the default IBM i connection.
-
-Create the database tables and load the initial records before running the feeder. The setup scripts are in [`ddl/`](ddl/) and [`bulk-data/`](bulk-data/).
-
-## Configure
-
-Copy the example file and edit `.env` with your database connection details:
-
-```sh
-cp .env.example .env
+```bash
+git clone https://github.com/umerwhu/BankStream_Feeder.git
+cd BankStream_Feeder
+npm ci --omit=optional
 ```
 
-In PowerShell, use `Copy-Item .env.example .env` instead. Set the Oracle user, password, connect string, and schema (`ORACLE_*` variables). For the default IBM i connection, set the host, schema, user, and password (`DB2I_HOST`, `DB2I_SCHEMA`, `DB2I_USER`, and `DB2I_PASSWORD`). The project-local JT400 driver path is already set in the example. Keep `.env` private; it is excluded from Git.
+Use the release or branch supplied by your operator. Remote mode requires no database credentials, database drivers, Java, or Oracle client installation.
 
-The optional Customer 360 demo settings select the customer and linked account used by the demo commands. Defaults are customer `100002`, account `AC1000021`, and a fixed withdrawal of `GBP 200`. The withdrawal amount and currency must remain `200` and `GBP`.
+On Windows PowerShell, use `npm.cmd` if `npm` is blocked by script execution policy.
 
-For the optional TapData API comparison, configure the TapData values in `.env` using the real environment details supplied by your TapData administrator. Replace the `example.invalid` URLs and dummy client values from `.env.example`; they cannot connect to a service. `TAPDATA_API_BASE_URL` is the TapData API host/base URL (the command appends `/api/v1/MDM_CUSTOMER360` and `/api/v1/CUSTOMER_KYC`). Set either a valid `TAPDATA_ACCESS_TOKEN`, or `TAPDATA_TOKEN_URL`, `TAPDATA_CLIENT_ID`, and `TAPDATA_CLIENT_SECRET` with the authentication method supported by your TapData deployment. Keep all credentials in `.env` only; never commit them. The Customer 360 and KYC API paths and collection names should match the published TapData services.
+## Partner configuration
 
-## Quick start
+Copy `.env.example` to `.env` in the project folder (`cp .env.example .env`, or `Copy-Item .env.example .env` in PowerShell). The example selects remote mode by default; replace only the URL and token:
 
-From the project folder, run:
+```ini
+FEEDER_MODE=remote
+DEMO_API_URL=https://demo.example.com
+DEMO_API_TOKEN=<partner-token>
+```
 
-```sh
-npm ci
+Replace the example URL and token with the values supplied by your operator. The URL must use HTTPS. Keep the token private and do not commit `.env` or share it in logs or screenshots.
+
+Check your setup:
+
+```bash
 npm run dry-run
-npm run realtime -- --duration 5m --interval 15s
-```
-
-`dry-run` checks database connectivity without writing data. The real-time command runs for five minutes; press **Ctrl+C** to stop earlier.
-
-## Customer 360 demo commands
-
-These commands run independently of the real-time feeder. The selected customer and account must already exist in the databases and be linked through `ACCOUNT_CUSTOMER_RELATIONSHIP`.
-
-```sh
 npm run demo:status
-npm run demo:transaction
-npm run demo:verify -- --stage transaction
-npm run demo:verify -- --stage api
-npm run demo:kyc
-npm run demo:verify -- --stage kyc
-npm run demo:verify -- --stage api
-npm run demo:kyc:reset
 ```
 
-- `demo:status` reads the customer, linked account balances, recent transactions, and Oracle KYC details.
-- `demo:transaction` creates one completed GBP 200 withdrawal and deducts it from the account balance and available balance in the same database transaction. Type the requested confirmation when prompted. Each confirmed run creates a new withdrawal.
-- `demo:kyc` reads Oracle KYC for the configured `DEMO_CUSTOMER_ID` and asks `Confirm KYC update? (y/N):` before setting `REVIEW_REQUIRED / HIGH`. It updates any current KYC state after confirmation and makes no change if those target values are already set.
-- `demo:verify -- --stage transaction` checks the recorded withdrawal by its exact transaction ID, its GBP 200 amount and status, the recorded balance deductions, and current account balances.
-- `demo:verify -- --stage kyc` reads current Oracle KYC for `DEMO_CUSTOMER_ID`; it reports retrieval separately and passes only for the documented demo states `VERIFIED / LOW` or `REVIEW_REQUIRED / HIGH`.
-- `demo:verify -- --stage api` reads the current source account and latest completed withdrawal directly from DB2, plus current KYC for `DEMO_CUSTOMER_ID` from Oracle, then compares these values with the published TapData `MDM_CUSTOMER360` and `CUSTOMER_KYC` APIs. It is read-only, retries for CDC synchronization, reports each source/API value and PASS/FAIL, and returns a failure exit code when required fields do not match or cannot be found. Add `--transaction-id RT-...` to compare a specific DB2 transaction.
-- `demo:verify` with no stage runs both verification checks.
-- `demo:kyc:reset` reads Oracle KYC for `DEMO_CUSTOMER_ID` and asks `Confirm KYC reset? (y/N):` before setting the fixed demo baseline `VERIFIED / LOW`. It makes no change if already at that state. No local KYC JSON is read or written. This reset intentionally changes any other current state to the fixed demo baseline after confirmation; the repository's Oracle sample data seeds customers `100002` and `100011` as `VERIFIED / MEDIUM`.
+`dry-run` checks source database connectivity through the service. `demo:status` displays your assigned customer, linked account, recent transactions, and KYC details. Both are read-only.
 
-The status and verify commands are read-only. The API comparison uses a configurable CDC wait (`DEMO_API_CDC_RETRY_INTERVAL_MS`, default `2000`; `DEMO_API_CDC_TIMEOUT_MS`, default `30000`) so newly committed source changes have time to appear in TapData. `TAPDATA_REQUEST_TIMEOUT_MS` (default `15000`), `TAPDATA_PAGE_SIZE` (default `200`), and `TAPDATA_SCAN_LIMIT` (default `1000`) control API requests and record scanning. The transaction, KYC, and KYC reset commands change remote database records only after interactive confirmation. Runtime baseline and transaction records are stored under the ignored `runtime/` directory. KYC reset does not reverse withdrawals or restore account balances.
+## Available demo commands
 
-## Verify changes
+All seven commands work in local and remote modes.
 
-After the real-time run, check its execution summary for insert and update counts by table. Confirm the corresponding records or updated values in your demo databases. Counts can be zero for tables whose events were not selected during that run.
+| Command | What it does | Database writes |
+|---|---|---|
+| `npm run dry-run` | Checks Oracle and IBM i connectivity using SELECT queries. | None |
+| `npm run demo:status` | Displays customer, account balances, recent transactions, and KYC details. | None |
+| `npm run demo:transaction` | Previews the assigned account, asks for a GBP withdrawal amount, and requests confirmation. | Inserts a completed withdrawal and deducts the amount from balance and available balance. |
+| `npm run demo:kyc` | Shows current KYC and asks for confirmation before setting `REVIEW_REQUIRED / HIGH`. | Updates KYC if needed. |
+| `npm run demo:kyc:reset` | Asks for confirmation before restoring the fixed KYC baseline `VERIFIED / LOW`. | Updates KYC if needed; does not reverse withdrawals or restore balances. |
+| `npm run demo:verify` | Checks source transaction/KYC records and compares source values with TapData published APIs, reporting PASS/FAIL. | None |
+| `npm run realtime -- --duration 5m --interval 15s` | Generates banking and customer activity for five minutes, with a 15-second delay between cycles. | Inserts and updates records in the tables below. |
+
+Transaction and KYC prompts default to **No**. Answer `y` to confirm; cancelling submits no mutation. Each confirmed transaction creates a new withdrawal. Run writing commands only against the assigned demo environment.
+
+Verification normally needs no extra arguments. To check a particular stage or transaction:
+
+```bash
+npm run demo:verify -- --stage transaction
+npm run demo:verify -- --stage kyc
+npm run demo:verify -- --stage api --transaction-id RT-...
+```
+
+Realtime accepts configurable duration and interval, such as `--duration 2m --interval 10s`, subject to your partner's service limits. It reports a job ID, progress, status, and a final summary. Press **Ctrl+C** to request cancellation and allow the current database operation to finish safely. Partners run independent jobs; the service permits one active job per partner.
+
+## How the demo works
+
+1. You execute a command in the Feeder CLI.
+2. The Hosted Service authenticates your token and runs the operation using your partner's server-side database configuration.
+3. TapData independently captures committed source changes through its configured CDC tasks.
+4. `demo:verify` reads source records and the corresponding TapData published APIs to check that the expected values match.
+
+Realtime repeatedly generates source activity for the requested duration. It can select matched customers/accounts throughout the assigned schemas, beyond the interactive demo account. Some activities are randomly selected, so a short run may not change every table. The final summary shows insert/update counts by table.
+
+## Database tables and operations
+
+| Database | Table | Operations | Changes generated |
+|---|---|---|---|
+| IBM i / AS400 (DB2) | `ACCOUNT_TRANSACTION` | INSERT, UPDATE | Creates transactions. Realtime transitions pending transactions to completed/posted or rejected; the interactive withdrawal is inserted as completed/posted. |
+| IBM i / AS400 (DB2) | `BANK_ACCOUNT` | UPDATE | Adjusts balance and available balance for posted transactions. |
+| Oracle | `CUSTOMER_PROFILE` | UPDATE | Changes the preferred customer channel during realtime activity. |
+| Oracle | `CUSTOMER_KYC` | UPDATE | Changes KYC status and risk rating through confirmed KYC commands or realtime activity. |
+| Oracle | `CUSTOMER_INTERACTIONS` | INSERT | Adds customer service interactions during realtime activity. |
+| Oracle | `CUSTOMER_OFFERS` | UPDATE | Changes an existing customer offer's status during realtime activity. |
+
+The assigned schemas and demo records must already exist. Feeder commands do not provision schemas or TapData pipelines.
+
+## Basic troubleshooting
+
+| Problem | What to check |
+|---|---|
+| Authentication failed | Check `DEMO_API_TOKEN`. Ask the operator whether the token expired, was revoked, or the partner was disabled. |
+| Cannot reach the Hosted Service | Check `DEMO_API_URL`, network access, service availability, and certificate trust. `localhost` refers to your own computer. Ask the operator for the correct address or CA certificate; do not disable TLS verification. |
+| Verification reports FAIL | Check the reported source/API values. CDC may still be synchronizing; wait and rerun **verification**. If it continues failing, ask the operator to check published API configuration and the separately managed TapData tasks. Realtime activity can also change records during comparison. |
+| Realtime options rejected | Use duration/interval values allowed for your partner. Remote unlimited jobs are not supported. |
+| A mutation or job request times out | The operation may still have executed. Retain the reported idempotency key or job ID and contact the operator before submitting another writing command. |
+
+Jobs do not resume after a service restart. Cancellation stops future work; it does not undo committed changes. A run spanning both databases is not one atomic transaction.
+
+## Local mode and further documentation
+
+The example configuration recommends remote mode. To use local mode, change its active setting to `FEEDER_MODE=local` and uncomment/configure the relevant settings under **Optional: Local Mode**. Local mode connects directly to databases and requires source credentials and runtime dependencies. For backward compatibility, installations that omit `FEEDER_MODE` entirely still use local mode.
+
+- [Technical guide](docs/technical-guide.md): local setup, JDBC/ODBC requirements, verification settings, API contracts, realtime limits, and developer testing.
+- [Validation report](docs/phase6-validation.md): installation/platform checks and deployment limitations for service operators.

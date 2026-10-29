@@ -4,19 +4,39 @@
   "private": true,
   "description": "Real-time CDC workload for existing Db2 for i and Oracle banking databases",
   "main": "src/demo.js",
+  "exports": {
+    ".": "./src/demo.js",
+    "./service": "./src/hosted-service.js",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "realtime": "node src/demo.js realtime",
-    "dry-run": "node src/demo.js dry-run",
     "demo:status": "node src/demo-cli.js status",
     "demo:transaction": "node src/demo-cli.js transaction",
     "demo:kyc": "node src/demo-cli.js kyc",
     "demo:verify": "node src/demo-cli.js verify",
     "demo:kyc:reset": "node src/demo-cli.js kyc:reset",
-    "test": "node --test"
+    "test": "node --test",
+    "driver:jt400": "node scripts/install-jt400.js",
+    "doctor": "node scripts/doctor.js",
+    "portability:check": "node scripts/validate-portability.js",
+    "portability:linux": "node scripts/validate-linux.js",
+    "dry-run": "node src/demo.js dry-run"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
-    "odbc": "^2.4.9",
-    "oracledb": "^6.7.0"
-  }
+    "dotenv": "16.6.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "optionalDependencies": {
+    "odbc": "2.6.0",
+    "oracledb": "6.10.0"
+  },
+  "files": [
+    "src/",
+    "scripts/",
+    "README.md",
+    ".env.example"
+  ]
 }

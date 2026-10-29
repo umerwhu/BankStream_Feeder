@@ -9,10 +9,11 @@ const TABLES = [
   { database: 'Oracle', schema: null, table: 'CUSTOMER_OFFERS' }
 ];
 
-function createExecutionSummary({ oracleSchema, intervalMs, startedAt = Date.now() }) {
+function createExecutionSummary({ db2Schema = 'BANKCORE', oracleSchema, intervalMs, startedAt = Date.now(), formatError = error => error?.message || String(error), onSuccess = () => {} }) {
   const tables = new Map(TABLES.map(item => {
-    const schema = item.schema || oracleSchema;
-    return [`${schema}.${item.table}`, { ...item, schema, inserts: 0, updates: 0 }];
+    const schema = item.schema ? db2Schema : oracleSchema;
+    const database = item.schema ? `IBM i (AS/400) - ${db2Schema}` : item.database;
+    return [`${schema}.${item.table}`, { ...item, database, schema, inserts: 0, updates: 0 }];
   }));
   const successfulOperationKeys = new Set();
   return {
@@ -33,10 +34,11 @@ function createExecutionSummary({ oracleSchema, intervalMs, startedAt = Date.now
       if (operationKey && successfulOperationKeys.has(operationKey)) return 0;
       if (operationKey) successfulOperationKeys.add(operationKey);
       stats[operation === 'INSERT' ? 'inserts' : 'updates'] += rows;
+      onSuccess({ schema, table, operation, rows });
       return rows;
     },
     recordFailure({ schema, table, operation, error }) {
-      this.failures.push({ schema, table, operation, message: error?.message || String(error) });
+      this.failures.push({ schema, table, operation, message: formatError(error) });
     }
   };
 }
@@ -58,7 +60,7 @@ function printExecutionSummary(summary, log = console.log) {
   const allTables = [...summary.tables.values()];
   const inserts = allTables.reduce((total, row) => total + row.inserts, 0);
   const updates = allTables.reduce((total, row) => total + row.updates, 0);
-  const failures = summary.failures.length;
+  const failures = summary.errorCount ?? summary.failures.length;
   const seconds = summary.intervalMs / 1000;
   const interval = Number.isInteger(seconds) ? `${seconds} ${seconds === 1 ? 'second' : 'seconds'}` : `${seconds} seconds`;
   log(line);
@@ -69,7 +71,7 @@ function printExecutionSummary(summary, log = console.log) {
   log(`Total Cycles:          ${summary.cycles}`);
   log(`Status:                ${summary.status}`);
   log('');
-  for (const database of ['IBM i (AS/400) - BANKCORE', 'Oracle']) {
+  for (const database of [...new Set(allTables.map(row => row.database))]) {
     const rows = allTables.filter(row => row.database === database);
     const title = database === 'Oracle' ? `Oracle - ${summary.oracleSchema}` : database;
     log(`DATABASE: ${title}`);
@@ -87,7 +89,7 @@ function printExecutionSummary(summary, log = console.log) {
   log(`Total Updates:         ${updates}`);
   log(`Total Operations:      ${inserts + updates}`);
   log(`Failed Operations:     ${failures}`);
-  if (failures) {
+  if (summary.failures.length) {
     log('Failed operation details:');
     for (const failure of summary.failures) {
       log(`  ${failure.schema}.${failure.table} ${failure.operation}: ${failure.message}`);

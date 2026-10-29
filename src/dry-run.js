@@ -1,4 +1,4 @@
-async function dryRun({ connectOracle, connectDb2 }) {
+async function dryRun({ connectOracle, connectDb2, log = console.log, errorLog = console.error, formatError = error => error.message }) {
   let failed = false;
   for (const [label, connect, check] of [
     ['Oracle', connectOracle, connection => connection.execute('SELECT 1 FROM DUAL')],
@@ -8,21 +8,21 @@ async function dryRun({ connectOracle, connectDb2 }) {
     try {
       connection = await connect();
       await check(connection);
-      console.log(`${label} connection: OK`);
+      log(`${label} connection: OK`);
     } catch (error) {
       failed = true;
-      console.error(`${label} connection: FAILED (${error.message})`);
+      errorLog(`${label} connection: FAILED (${formatError(error)})`);
     } finally {
       if (connection) {
         try { await connection.close(); } catch (error) {
           failed = true;
-          console.error(`${label} close: FAILED (${error.message})`);
+          errorLog(`${label} close: FAILED (${formatError(error)})`);
         }
       }
     }
   }
   if (failed) throw new Error('One or more database connectivity checks failed');
-  console.log('Dry run complete; no data was changed.');
+  log('Dry run complete; no data was changed.');
 }
 
 module.exports = { dryRun };

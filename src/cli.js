@@ -44,4 +44,12 @@ Options:
   --events-per-cycle <number>      Events to generate per cycle (default: 1)
   --help                           Show this help`;
 
-module.exports = { parseDuration, parseInterval, parseRealtimeArgs, helpText };
+function validateHostedRealtimeOptions(input = {}, policy = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['durationMs', 'intervalMs', 'eventsPerCycle'].includes(key))) throw new Error('Invalid realtime options');
+  const { durationMs = 300000, intervalMs = 15000, eventsPerCycle = 1 } = input;
+  if (!Number.isSafeInteger(durationMs) || durationMs < 1000 || durationMs > Math.min(policy.maxDurationMs ?? 3600000, 3600000)) throw new Error('Remote duration exceeds its allowed range; unlimited is not supported');
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < Math.max(policy.minIntervalMs ?? 1000, 1000) || intervalMs > 3600000) throw new Error('Remote interval exceeds its allowed range');
+  if (!Number.isSafeInteger(eventsPerCycle) || eventsPerCycle < 1 || eventsPerCycle > Math.min(policy.maxEventsPerCycle ?? 10, 10)) throw new Error('Remote events-per-cycle exceeds its allowed range');
+  return { durationMs, intervalMs, eventsPerCycle };
+}
+module.exports = { parseDuration, parseInterval, parseRealtimeArgs, helpText, validateHostedRealtimeOptions };
