@@ -6,6 +6,8 @@ const { validateVerificationOptions } = require('./verification');
 const { readJson } = require('./bounded-json');
 const { validateHostedRealtimeOptions } = require('./cli');
 const ENDPOINTS = Object.freeze({
+  resetPreview: { method: 'GET', path: '/api/demo/reset/preview' },
+  reset: { method: 'POST', path: '/api/demo/reset' },
   status: { method: 'GET', path: '/api/demo/status' },
   transactionPreview: { method: 'GET', path: '/api/demo/transaction/preview' },
   transaction: { method: 'POST', path: '/api/demo/transaction' },
@@ -21,7 +23,20 @@ const ENDPOINTS = Object.freeze({
 
 const reference = value => typeof value === 'string' && /^[A-Za-z0-9._~-]{1,256}$/.test(value);
 const text = value => typeof value === 'string' && value.length > 0;
-function validResult(operation, data) {
+function validResult(operation, data, resetOperation = 'both') {
+  if (operation === 'resetPreview') return reference(data?.previewId) && validResult('transactionPreview', { previewId: data.previewId, account: data.account }) &&
+    validResult('kycPreview', { previewId: data.previewId, kyc: data.kyc });
+  if (operation === 'reset') {
+    const parts = resetOperation === 'both' ? ['kyc', 'account'] : [resetOperation];
+    if (!data || !text(data.customerId) || !text(data.accountId) || typeof data.passed !== 'boolean' ||
+        !parts.every(part => typeof data[part]?.passed === 'boolean' &&
+          (data[part].passed || text(data[part].error))) || data.passed !== parts.every(part => data[part].passed)) return false;
+    try {
+      return (!parts.includes('kyc') || !data.kyc.passed || (data.kyc.status === 'VERIFIED' && data.kyc.riskRating === 'LOW')) &&
+        (!parts.includes('account') || !data.account.passed || (databaseMoneyToMinorUnits(data.account.balance) === 4000000n &&
+          databaseMoneyToMinorUnits(data.account.availableBalance) === 4000000n));
+    } catch { return false; }
+  }
   if (operation.startsWith('realtime')) return reference(data?.jobId) &&
     ['Queued', 'Running', 'Stopping', 'Completed', 'Completed with errors', 'Failed'].includes(data.state) &&
     (operation === 'realtimeStart' || (Number.isSafeInteger(data.cursor) && data.cursor >= 0 && Array.isArray(data.events) && data.events.length <= 256 &&
@@ -61,14 +76,16 @@ function createRemoteClient({ env = process.env, fetchImpl = globalThis.fetch } 
   async function execute(operation, input = {}) {
     if (!Object.hasOwn(ENDPOINTS, operation)) throw new Error('This command is not yet supported in remote mode');
     const endpoint = ENDPOINTS[operation];
+    if (operation === 'reset' && input.operation !== undefined && !['kyc', 'account', 'both'].includes(input.operation)) throw new Error('Invalid reset operation');
     let body;
     const headers = { authorization: `Bearer ${config.token}`, accept: 'application/json' };
-    const mutation = ['transaction', 'kyc', 'kycReset'].includes(operation);
+    const mutation = ['transaction', 'kyc', 'kycReset', 'reset'].includes(operation);
     if (mutation) {
       if (!reference(input.previewId) || !reference(input.idempotencyKey) || input.confirmed !== true) {
         throw new Error('Mutation requires a preview reference, confirmation and idempotency key');
       }
       body = JSON.stringify({ ...(operation === 'transaction' ? { amount: formatMinorUnits(moneyToMinorUnits(input.amount, 'Withdrawal amount')) } : {}),
+        ...(operation === 'reset' && input.operation !== undefined ? { operation: input.operation } : {}),
         previewId: input.previewId, confirmed: true });
       headers['content-type'] = 'application/json';
       headers['idempotency-key'] = input.idempotencyKey;
@@ -118,7 +135,7 @@ function createRemoteClient({ env = process.env, fetchImpl = globalThis.fetch } 
       try { payload = await readJson(response); }
       catch { throw new Error('Demo Control Service returned an invalid response'); }
       const exitCode = payload?.result?.passed === false ? 1 : 0;
-      if (payload?.version !== 1 || payload.exitCode !== exitCode || !validResult(operation, payload.result)) {
+      if (payload?.version !== 1 || payload.exitCode !== exitCode || !validResult(operation, payload.result, input.operation)) {
         const label = operation.startsWith('realtime') ? 'realtime' : operation === 'status' ? 'status' : operation.startsWith('transaction') ? 'transaction' : operation === 'verify' ? 'verification' : 'KYC';
         throw new Error(`Demo Control Service returned an invalid ${label} response`);
       }
@@ -128,7 +145,7 @@ function createRemoteClient({ env = process.env, fetchImpl = globalThis.fetch } 
     catch (error) {
       if (operation === 'realtimeStart') throw new Error(`${error.message}. A job may have started; do not start another. Retain idempotency key ${input.idempotencyKey} for reconciliation.`);
       if (mutation) {
-        throw new Error(`${error.message}. ${operation === 'transaction' ? 'Withdrawal' : 'KYC mutation'} outcome may be unknown; do not submit a new mutation. Retain idempotency key ${input.idempotencyKey} for reconciliation.`);
+        throw new Error(`${error.message}. ${operation === 'transaction' ? 'Withdrawal' : operation === 'reset' ? 'Demo reset' : 'KYC mutation'} outcome may be unknown; do not submit a new mutation. Retain idempotency key ${input.idempotencyKey} for reconciliation.`);
       }
       throw error;
     }

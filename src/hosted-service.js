@@ -25,6 +25,16 @@ function createHostedService(settings, { connections, fetchImpl } = {}) {
     finally { await db.close(); }
   }
   return {
+    resetPreview: () => withDb('db2', db2 => withDb('oracle', async oracle => ({
+      account: await demo.readWithdrawalAccount(db2), kyc: await demo.currentKyc(oracle)
+    }))),
+    reset: (_preview, operation = 'both') => require('./demo-reset').createDemoReset(options).run({
+      withDb2: action => withDb('db2', action), withOracle: action => withDb('oracle', action)
+    }, operation).then(report => {
+      // Driver messages can contain SQL and connection details; do not expose them remotely.
+      for (const part of ['kyc', 'account']) if (report[part] && !report[part].passed) report[part].error = 'Reset failed or outcome uncertain; operator reconciliation required';
+      return report;
+    }),
     status: () => withDb('db2', db2 => withDb('oracle', oracle => demo.status(db2, oracle))),
     preview: () => withDb('db2', db2 => demo.readWithdrawalAccount(db2)),
     realtime: async (options, execution) => {

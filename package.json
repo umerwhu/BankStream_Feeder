@@ -16,6 +16,7 @@
     "demo:kyc": "node src/demo-cli.js kyc",
     "demo:verify": "node src/demo-cli.js verify",
     "demo:kyc:reset": "node src/demo-cli.js kyc:reset",
+    "demo:reset": "node src/reset-cli.js",
     "test": "node --test",
     "driver:jt400": "node scripts/install-jt400.js",
     "doctor": "node scripts/doctor.js",

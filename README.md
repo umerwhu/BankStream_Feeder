@@ -61,7 +61,7 @@ Local Mode requires you to deploy and configure your own data sources, including
 
 ## Demo commands
 
-Run commands from the project folder. All seven work in both modes.
+Run commands from the project folder. All commands below work in both modes.
 
 | Command | What it does |
 |---|---|
@@ -69,13 +69,15 @@ Run commands from the project folder. All seven work in both modes.
 | `npm run demo:status` | Displays customer, account, transaction, and KYC details without changing data. |
 | `npm run demo:transaction` | Previews the account and asks for withdrawal amount and confirmation. Inserts a completed withdrawal and reduces balance and available balance. |
 | `npm run demo:kyc` | Shows current KYC and asks for confirmation before setting status/risk to `REVIEW_REQUIRED / HIGH`, if needed. |
-| `npm run demo:kyc:reset` | Asks for confirmation before restoring KYC to `VERIFIED / LOW`, if needed. Does not reverse withdrawals or restore balances. |
+| `npm run demo:reset` | Offers a menu to reset KYC, account balances, or both, or cancel. After confirmation, restores selected KYC to `VERIFIED / LOW` and/or both balances to `40000`, then verifies and summarizes the selected results. Keeps transaction history. |
 | `npm run demo:verify` | Reads source transactions/KYC and compares source balances, transactions, and KYC with TapData published APIs. Reports PASS/FAIL without changing data. |
 | `npm run realtime -- --duration 5m --interval 15s` | Generates transactions and customer activity for five minutes, with a 15-second delay between cycles. |
 
 Transaction and KYC commands require an interactive terminal. Confirmation defaults to **No**; enter `y` to proceed. Cancelling makes no changes. Each confirmed withdrawal creates a new transaction. Use writing commands only against your assigned demo environment.
 
-For a simple demo, run `demo:transaction`, then `demo:verify`; run `demo:kyc`, then `demo:verify` again. Use `demo:kyc:reset` to restore the KYC baseline.
+For a simple demo, run `demo:transaction`, then `demo:verify`; run `demo:kyc`, then `demo:verify` again. Use `demo:reset` and select **Reset KYC** to restore the KYC baseline.
+
+`demo:reset` commits each database separately. If either step fails, it reports both outcomes and exits with an error. Remote partial failures require operator reconciliation before further writes. Remote reset requires a Control Service version with the reset endpoints.
 
 ### Realtime activity
 

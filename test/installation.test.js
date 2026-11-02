@@ -55,10 +55,10 @@ test('remote dry-run preserves output and exit status without importing database
   }
 });
 
-test('partner script surface has six demo operations plus dry-run and unknown commands fail before source imports', () => {
+test('partner script surface includes demo reset and unknown commands fail before source imports', () => {
   const scripts = require('../package.json').scripts;
   assert.deepEqual(Object.keys(scripts).filter(name => name.startsWith('demo:') || ['dry-run', 'realtime'].includes(name)).sort(),
-    ['demo:kyc', 'demo:kyc:reset', 'demo:status', 'demo:transaction', 'demo:verify', 'dry-run', 'realtime']);
+    ['demo:kyc', 'demo:kyc:reset', 'demo:reset', 'demo:status', 'demo:transaction', 'demo:verify', 'dry-run', 'realtime']);
   for (const mode of ['local', 'remote']) {
     const script = `
       const Module = require('node:module'); const load = Module._load;
