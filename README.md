@@ -7,7 +7,7 @@ The Feeder changes source data and verifies results. It does not create schemas 
 ## Before you start: choose a mode
 
 - **Remote Mode (recommended for partners):** TapData provides the databases and service. Skip database setup and follow [Remote Mode](#remote-mode-recommended-for-partners).
-- **Local Mode:** you manage your own Oracle and IBM i databases. Complete the database setup below first, then follow [Local Mode](#local-mode-alternative).
+- **Local Mode:** you manage your own Oracle and IBM i databases. Complete the database setup below first, then follow [Local Mode](#local-mode).
 
 ### Local Mode only: create databases, schemas, and demo records first
 
@@ -68,6 +68,8 @@ The URL must use HTTPS. No other settings are needed for Remote Mode. Keep your 
 
 ### 3. Check the connection
 
+Before running `npm run demo:status`, `npm run demo:transaction`, or the other demo commands, confirm with your operator that the required TapData tasks have completed their initial synchronization, CDC tasks are running, and the Customer 360 and KYC APIs are published and accessible.
+
 ```bash
 npm run dry-run
 npm run demo:status
@@ -75,7 +77,7 @@ npm run demo:status
 
 These commands are read-only. `dry-run` checks Oracle and IBM i connectivity through the service. `demo:status` shows your assigned customer, linked account, balances, recent transactions, and KYC details. Once they succeed, use the demo commands below.
 
-## Local Mode (alternative)
+## Local Mode
 
 Complete the database setup above before these steps.
 
@@ -89,8 +91,6 @@ cd BankStream_Feeder
 npm ci 
 ```
 
-Install the drivers and runtime dependencies described in the [technical guide](docs/technical-guide.md). For IBM i JDBC, install JDK 11+ and run `npm run driver:jt400`, then configure the installed JAR path. Oracle uses Thin mode; Oracle Instant Client is not required.
-
 ### 2. Configure
 
 Copy `.env.example` to `.env` using the PowerShell or macOS/Linux copy command above. Set:
@@ -99,9 +99,9 @@ Copy `.env.example` to `.env` using the PowerShell or macOS/Linux copy command a
 FEEDER_MODE=local
 ```
 
-Follow **Optional: Local Mode** in [.env.example](.env.example) to set Oracle and IBM i connections, actual schema names, and demo IDs. The default customer is `100002` and account is `AC1000021`. Remote service URL/token settings are not used in Local Mode.
+Configure the Local Mode settings in [.env.example](.env.example) for Oracle and IBM i connections, actual schema names, and demo IDs. These settings are required when using Local Mode. The default customer is `100002` and account is `AC1000021`. Remote service URL/token settings are not used in Local Mode.
 
-Configure TapData CDC tasks and published APIs separately. Set the TapData API settings in `.env` for `demo:verify`. Keep all credentials private.
+Configure TapData tasks separately. Before running `npm run demo:status`, `npm run demo:transaction`, or the other demo commands, complete the initial synchronization, keep CDC tasks running, and publish the Customer 360 and KYC APIs. Set the TapData API settings in `.env` for `demo:verify`. Keep all credentials private.
 
 ### 3. Check the connection and demo records
 
@@ -115,7 +115,7 @@ npm run demo:status
 
 ## Demo commands
 
-Run commands from the project folder. All commands below work in both modes.
+Run commands from the project folder after completing the TapData task and API setup above. All commands below work in both modes.
 
 | Command | What it does |
 |---|---|
