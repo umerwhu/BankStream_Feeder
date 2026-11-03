@@ -35,7 +35,7 @@ You need Git, Node.js 24 (the validated baseline), npm, and network access to th
 ```bash
 git clone https://github.com/umerwhu/BankStream_Feeder.git
 cd BankStream_Feeder
-npm ci --omit=optional
+npm ci 
 ```
 
 Use the release or branch supplied by your operator. On Windows PowerShell, replace `npm` with `npm.cmd` if script execution policy blocks it.
@@ -86,7 +86,7 @@ Use Git, Node.js 24, and npm. Download the project and install database dependen
 ```bash
 git clone https://github.com/umerwhu/BankStream_Feeder.git
 cd BankStream_Feeder
-npm ci --include=optional
+npm ci 
 ```
 
 Install the drivers and runtime dependencies described in the [technical guide](docs/technical-guide.md). For IBM i JDBC, install JDK 11+ and run `npm run driver:jt400`, then configure the installed JAR path. Oracle uses Thin mode; Oracle Instant Client is not required.
