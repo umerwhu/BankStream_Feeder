@@ -4,9 +4,29 @@ BankStream Feeder generates banking transactions and customer updates in Oracle 
 
 The Feeder changes source data and verifies results. It does not create schemas or configure TapData tasks, FDM, MDM, or pipelines. Source schemas, demo records, and TapData pipelines must already be set up.
 
+## Before you start: choose a mode
+
+- **Remote Mode (recommended for partners):** TapData provides the databases and service. Skip database setup and follow [Remote Mode](#remote-mode-recommended-for-partners).
+- **Local Mode:** you manage your own Oracle and IBM i databases. Complete the database setup below first, then follow [Local Mode](#local-mode-alternative).
+
+### Local Mode only: create databases, schemas, and demo records first
+
+1. Deploy Oracle and IBM i (AS/400) and make them reachable from the Feeder computer.
+2. Download this repository to access the SQL files. Run the schema scripts using your database SQL tools, then load the matching sample data:
+
+| Database | First: create schemas and tables | Next: load demo records |
+|---|---|---|
+| IBM i | [01_db2i_schema.sql](ddl/01_db2i_schema.sql) | [01_db2i_sample_data.sql](bulk-data/01_db2i_sample_data.sql) |
+| Oracle | [02_oracle_schema.sql](ddl/02_oracle_schema.sql) | [02_oracle_sample_data.sql](bulk-data/02_oracle_sample_data.sql) |
+
+3. Review setup placeholders and permissions with your database administrator. In the IBM i script, replace `username` and apply its table grant after creating the table. The Oracle script requires SQL*Plus/SQLcl and prompts for a password, PDB name, and service.
+4. Grant the Feeder user read/write access to the required tables. Ensure the demo customer and account exist and are linked through `ACCOUNT_CUSTOMER_RELATIONSHIP`.
+
+The supplied scripts use `BANKCORE` for IBM i and `C##BANKCRM` for Oracle. Use the same names in your connection configuration, or adapt the scripts and configuration together. PostgreSQL is not required for the Feeder commands below.
+
 ## Remote Mode (recommended for partners)
 
-In Remote Mode, the CLI sends requests to a Hosted Service(By Tapdata). The service uses your partner's assigned databases and keeps database and TapData credentials on the server. You do not need local database environments. 
+The CLI connects to the TapData-hosted Control Service. The service uses your partner's assigned databases and keeps database and TapData credentials on the server. You do not need your own database installation.
 
 ### 1. Install
 
@@ -57,7 +77,41 @@ These commands are read-only. `dry-run` checks Oracle and IBM i connectivity thr
 
 ## Local Mode (alternative)
 
-Local Mode requires you to deploy and configure your own data sources, including Oracle and IBM i (AS/400), with the required schemas and demo records. Set `FEEDER_MODE=local` and follow the **Optional: Local Mode** settings in [.env.example](.env.example) to configure database connections and other required settings, including TapData API access for verification. Install the required local dependencies and drivers as described in the [technical guide](docs/technical-guide.md). Run the same demo commands below.
+Complete the database setup above before these steps.
+
+### 1. Install
+
+Use Git, Node.js 24, and npm. Download the project and install database dependencies. If you already downloaded it for database setup, open that project folder and run only the install command:
+
+```bash
+git clone https://github.com/umerwhu/BankStream_Feeder.git
+cd BankStream_Feeder
+npm ci --include=optional
+```
+
+Install the drivers and runtime dependencies described in the [technical guide](docs/technical-guide.md). For IBM i JDBC, install JDK 11+ and run `npm run driver:jt400`, then configure the installed JAR path. Oracle uses Thin mode; Oracle Instant Client is not required.
+
+### 2. Configure
+
+Copy `.env.example` to `.env` using the PowerShell or macOS/Linux copy command above. Set:
+
+```ini
+FEEDER_MODE=local
+```
+
+Follow **Optional: Local Mode** in [.env.example](.env.example) to set Oracle and IBM i connections, actual schema names, and demo IDs. The default customer is `100002` and account is `AC1000021`. Remote service URL/token settings are not used in Local Mode.
+
+Configure TapData CDC tasks and published APIs separately. Set the TapData API settings in `.env` for `demo:verify`. Keep all credentials private.
+
+### 3. Check the connection and demo records
+
+```bash
+npm run doctor
+npm run dry-run
+npm run demo:status
+```
+
+`doctor` checks configuration and runtime dependencies without connecting. `dry-run` checks database connectivity; `demo:status` reads the customer, account, and KYC records. These checks do not change data. Continue with the demo commands once they pass.
 
 ## Demo commands
 
@@ -67,9 +121,9 @@ Run commands from the project folder. All commands below work in both modes.
 |---|---|
 | `npm run dry-run` | Checks both source database connections using read-only SELECT queries. |
 | `npm run demo:status` | Displays customer, account, transaction, and KYC details without changing data. |
-| `npm run demo:transaction` | Previews the account and asks for withdrawal amount and confirmation. Inserts a completed withdrawal and reduces balance and available balance. |
+| `npm run demo:transaction` | Previews the account and asks for a GBP withdrawal amount and confirmation. Inserts a completed withdrawal and reduces balance and available balance. |
 | `npm run demo:kyc` | Shows current KYC and asks for confirmation before setting status/risk to `REVIEW_REQUIRED / HIGH`, if needed. |
-| `npm run demo:reset` | Offers a menu to reset KYC, account balances, or both, or cancel. After confirmation, restores selected KYC to `VERIFIED / LOW` and/or both balances to `40000`, then verifies and summarizes the selected results. Keeps transaction history. |
+| `npm run demo:reset` | Offers KYC reset, balance reset, both, or cancel. Reads current values after selection and confirms only necessary changes. Restores KYC to `VERIFIED / LOW` and/or both balances to `40000`. Keeps transaction history. |
 | `npm run demo:verify` | Reads source transactions/KYC and compares source balances, transactions, and KYC with TapData published APIs. Reports PASS/FAIL without changing data. |
 | `npm run realtime -- --duration 5m --interval 15s` | Generates transactions and customer activity for five minutes, with a 15-second delay between cycles. |
 
@@ -94,7 +148,7 @@ TapData independently captures these committed changes; `demo:verify` checks sou
 | Database | Table | Changes |
 |---|---|---|
 | IBM i / AS400 (DB2) | `ACCOUNT_TRANSACTION` | Inserts transactions. Realtime also updates pending transactions to completed/posted or rejected. Interactive withdrawals are inserted as completed/posted. |
-| IBM i / AS400 (DB2) | `BANK_ACCOUNT` | Updates balance and available balance for posted transactions. |
+| IBM i / AS400 (DB2) | `BANK_ACCOUNT` | Updates balances for posted transactions or restores both to `40000` through reset. |
 | Oracle | `CUSTOMER_PROFILE` | Updates the preferred customer channel during realtime activity. |
 | Oracle | `CUSTOMER_KYC` | Updates KYC status and risk through KYC commands or realtime activity. |
 | Oracle | `CUSTOMER_INTERACTIONS` | Inserts customer service interactions during realtime activity. |
@@ -113,4 +167,3 @@ TapData independently captures these committed changes; `demo:verify` checks sou
 ## Further documentation
 
 - [Technical guide](docs/technical-guide.md): local dependencies and drivers, configuration, verification settings, service contracts, realtime limits, and developer testing.
-- [Validation report](docs/phase6-validation.md): installation/platform checks and deployment limitations for service operators.
