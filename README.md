@@ -28,6 +28,7 @@ The supplied scripts use `BANKCORE` for IBM i and `C##BANKCRM` for Oracle. Use t
 
 The CLI connects to the TapData-hosted Control Service. The service uses your partner's assigned databases and keeps database and TapData credentials on the server. You do not need your own database installation.
 
+
 ### 1. Install
 
 You need Git, Node.js 24 (the validated baseline), npm, and network access to the Hosted Service. Ask Tapdata for the HTTPS URL, partner API token, and release or branch to use.
@@ -37,6 +38,8 @@ git clone https://github.com/umerwhu/BankStream_Feeder.git
 cd BankStream_Feeder
 npm ci 
 ```
+
+The TapData operator is responsible for configuring and running replication tasks, transformation tasks, and published APIs using the [TapData Tasks Setup Guide](tapdata_tasks/README.md).
 
 Use the release or branch supplied by your operator. On Windows PowerShell, replace `npm` with `npm.cmd` if script execution policy blocks it.
 
@@ -101,7 +104,8 @@ FEEDER_MODE=local
 
 Configure the Local Mode settings in [.env.example](.env.example) for Oracle and IBM i connections, actual schema names, and demo IDs. These settings are required when using Local Mode. The default customer is `100002` and account is `AC1000021`. Remote service URL/token settings are not used in Local Mode.
 
-Configure TapData tasks separately. Before running `npm run demo:status`, `npm run demo:transaction`, or the other demo commands, complete the initial synchronization, keep CDC tasks running, and publish the Customer 360 and KYC APIs. Set the TapData API settings in `.env` for `demo:verify`. Keep all credentials private.
+Local Mode users must configure TapData replication tasks, transformation tasks, and published APIs in their own environment. Follow the [TapData Tasks Setup Guide](tapdata_tasks/README.md) before running Feeder demo commands.
+
 
 ### 3. Check the connection and demo records
 
@@ -112,6 +116,8 @@ npm run demo:status
 ```
 
 `doctor` checks configuration and runtime dependencies without connecting. `dry-run` checks database connectivity; `demo:status` reads the customer, account, and KYC records. These checks do not change data. Continue with the demo commands once they pass.
+
+Configure TapData tasks first. Before running `npm run demo:transaction`, or the other demo commands, complete the initial synchronization, keep CDC tasks running, and publish the Customer 360 and KYC APIs. Set the TapData API settings in `.env` for `demo:verify`. Keep all credentials private.
 
 ## Demo commands
 
@@ -167,3 +173,4 @@ TapData independently captures these committed changes; `demo:verify` checks sou
 ## Further documentation
 
 - [Technical guide](docs/technical-guide.md): local dependencies and drivers, configuration, verification settings, service contracts, realtime limits, and developer testing.
+- [TapData Tasks Setup Guide](tapdata_tasks/README.md): import and configure replication tasks, transformation tasks, and published APIs.
