@@ -4,15 +4,6 @@ This guide explains how to restore the BankStream demo in a new TapData environm
 
 > **Before you start:** Use the three exported TapData packages listed below. The import UI and options may vary by TapData version.
 
-## Clone the repository
-
-Install Git, then run the following commands in your terminal to download the demo files and open the repository folder:
-
-```sh
-git clone https://github.com/umerwhu/Tapdata_Tasks.git
-cd Tapdata_Tasks
-```
-
 The export packages listed below are in this folder. Use them when importing tasks and API services into TapData.
 
 ## 1. Required export files
