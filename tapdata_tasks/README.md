@@ -53,8 +53,10 @@ After all connections pass, start the tasks in the order below.
 **Step 1 — Start replication tasks (CDC)**
 
 1. Open the imported **Replication** tasks in TapData.
-2. Start the replication tasks and check that they show a running/healthy status.
-3. Confirm that data from Oracle and IBM i / AS400 is arriving in the **FDM** layer.
+<img width="2560" height="1305" alt="image" src="https://github.com/user-attachments/assets/12949179-c806-4ad1-b976-7d1c6031e75f" />
+
+3. Start the replication tasks and check that they show a running/healthy status.
+4. Confirm that data from Oracle and IBM i / AS400 is arriving in the **FDM** layer.
 
 **Step 2 — Start transformation tasks**
 
