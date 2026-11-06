@@ -67,7 +67,57 @@ DEMO_API_URL=https://demo.example.com
 DEMO_API_TOKEN=replace_with_partner_token
 ```
 
-The URL must use HTTPS. No other settings are needed for Remote Mode. Keep your token private; do not commit `.env` or share it in logs or screenshots.
+The URL must use HTTPS. No other `.env` settings are needed for Remote Mode. Keep your token private; do not commit `.env` or share it in logs or screenshots.
+
+### HTTPS Certificate Configuration
+
+Before running any remote-mode dry-run or demo commands, configure `NODE_EXTRA_CA_CERTS` to trust the supplied CA certificate when connecting to the BankStream Demo Control Service. Local mode does not require this configuration unless its HTTPS endpoints use the same private CA.
+
+After installing dependencies and configuring `.env`, run the commands for your OS **from the project folder** (the folder containing this README). They save an absolute path to `public-key-certificate/bankstream-vip-2year.crt` for future terminal sessions.
+
+**Windows (PowerShell):**
+
+```powershell
+$caCert = (Resolve-Path './public-key-certificate/bankstream-vip-2year.crt').Path
+[Environment]::SetEnvironmentVariable('NODE_EXTRA_CA_CERTS', $caCert, 'User')
+```
+
+Restart your terminal, then verify the variable and certificate file (`True` means the file exists):
+
+```powershell
+$env:NODE_EXTRA_CA_CERTS
+Test-Path -LiteralPath $env:NODE_EXTRA_CA_CERTS -PathType Leaf
+```
+
+**Linux (Bash):**
+
+```bash
+printf 'export NODE_EXTRA_CA_CERTS=%q\n' "$(pwd -P)/public-key-certificate/bankstream-vip-2year.crt" >> ~/.bashrc
+source ~/.bashrc
+```
+
+Verify the variable and certificate file:
+
+```bash
+printf '%s\n' "$NODE_EXTRA_CA_CERTS"
+test -f "$NODE_EXTRA_CA_CERTS" && echo 'Certificate file found'
+```
+
+**macOS (Zsh):**
+
+```zsh
+printf 'export NODE_EXTRA_CA_CERTS=%q\n' "$(pwd -P)/public-key-certificate/bankstream-vip-2year.crt" >> ~/.zshrc
+source ~/.zshrc
+```
+
+Verify the variable and certificate file:
+
+```zsh
+printf '%s\n' "$NODE_EXTRA_CA_CERTS"
+test -f "$NODE_EXTRA_CA_CERTS" && echo 'Certificate file found'
+```
+
+Restart your terminal (or source the shell file as shown) and restart any running Node.js process after configuration: Node.js reads this variable at startup. Continue with the connection check only after verification succeeds.
 
 ### 3. Check the connection
 
