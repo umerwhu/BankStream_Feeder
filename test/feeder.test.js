@@ -110,8 +110,8 @@ test('provided seed customer mappings use the shared customer IDs across both so
 
 
 test('Db2 ODBC connection supports either a configured DSN or IBM i host settings',()=>{
-  const hostConnection=db2ConnectionString({db2:{host:'192.168.1.195',schema:'BANKCORE',driver:'IBM i Access ODBC Driver',user:'dbadmin',password:'secret'}});
-  assert.match(hostConnection,/DRIVER=\{IBM i Access ODBC Driver\};SYSTEM=\{192\.168\.1\.195\};DBQ=\{BANKCORE\}/);
+  const hostConnection=db2ConnectionString({db2:{host:'127.0.0.1',schema:'BANKCORE',driver:'IBM i Access ODBC Driver',user:'dbadmin',password:'secret'}});
+  assert.match(hostConnection,/DRIVER=\{IBM i Access ODBC Driver\};SYSTEM=\{127\.0\.0\.1\};DBQ=\{BANKCORE\}/);
   assert.match(hostConnection,/UID=\{dbadmin\};PWD=\{secret\}/);
   const dsnConnection=db2ConnectionString({db2:{dsn:'BANKCORE_DSN',user:'demo',password:'secret'}});
   assert.match(dsnConnection,/DSN=\{BANKCORE_DSN\};UID=\{demo\};PWD=\{secret\}/);

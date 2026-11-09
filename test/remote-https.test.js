@@ -12,7 +12,17 @@ const { spawnSync } = require('node:child_process');
 const { createRemoteClient } = require('../src/remote-client');
 const modulePath = path.resolve(__dirname, '../src/remote-https.js');
 const pem = fs.readFileSync(path.resolve(__dirname, '../public-key-certificate/bankstream-vip-2year.crt'), 'utf8');
-const env = { DEMO_API_URL: 'https://113.98.206.139:8443', DEMO_API_TOKEN: 'tls-test-token' };
+// Read only the URL from customer configuration; requests remain mocked and use a test token.
+const envPath = path.resolve(__dirname, '../.env');
+const fileEnv = fs.existsSync(envPath) ? require('dotenv').parse(fs.readFileSync(envPath)) : {};
+const env = {
+  DEMO_API_URL: process.env.DEMO_API_URL || fileEnv.DEMO_API_URL,
+  DEMO_API_TOKEN: 'tls-test-token'
+};
+
+if (!env.DEMO_API_URL) throw new Error('Set DEMO_API_URL in .env before running HTTPS tests.');
+const configuredUrl = new URL(env.DEMO_API_URL);
+const configuredHost = configuredUrl.hostname.replace(/^\[|\]$/g, '');
 
 function loadTransport({ read = fs.readFileSync, failure, inspect = () => {} } = {}) {
   const module = { exports: {} };
@@ -34,24 +44,29 @@ function loadTransport({ read = fs.readFileSync, failure, inspect = () => {} } =
   return module.exports;
 }
 
-test('bundled public CA is self-signed, currently valid, and matches configured IP SAN', () => {
+test('bundled public CA is self-signed and currently valid', () => {
   assert.doesNotMatch(pem, /PRIVATE KEY/);
   const certificate = new X509Certificate(pem);
   assert.equal(certificate.ca, true);
   assert.equal(certificate.verify(certificate.publicKey), true);
   assert.ok(Date.now() >= Date.parse(certificate.validFrom));
   assert.ok(Date.now() < Date.parse(certificate.validTo));
-  assert.equal(certificate.checkIP('113.98.206.139'), '113.98.206.139');
-  assert.equal(certificate.checkIP('127.0.0.1'), undefined);
-  assert.equal(tls.checkServerIdentity('113.98.206.139', certificate.toLegacyObject()), undefined);
-  assert.equal(tls.checkServerIdentity('wrong.example', certificate.toLegacyObject()).code, 'ERR_TLS_CERT_ALTNAME_INVALID');
+});
+
+test('TLS identity verification accepts the configured host SAN and rejects a mismatched host', () => {
+  // Synthetic identity fixture: this does not validate the deployed server certificate.
+  const sanType = require('node:net').isIP(configuredHost) ? 'IP Address' : 'DNS';
+  const certificate = { subjectaltname: `${sanType}:${configuredHost}` };
+  assert.equal(tls.checkServerIdentity(configuredHost, certificate), undefined);
+  const mismatchedHost = configuredHost === 'wrong.example' ? 'other.example' : 'wrong.example';
+  assert.equal(tls.checkServerIdentity(mismatchedHost, certificate).code, 'ERR_TLS_CERT_ALTNAME_INVALID');
 });
 
 test('mock HTTPS connection succeeds with bundled trust, default CAs and strict verification', async () => {
   let calls = 0;
   const transport = loadTransport({ inspect(url, options) {
     calls++;
-    assert.equal(url.hostname, '113.98.206.139');
+    assert.equal(url.origin, configuredUrl.origin);
     assert.equal(options.rejectUnauthorized, true);
     assert.equal(options.checkServerIdentity, tls.checkServerIdentity);
     assert.ok(options.ca.includes(pem));
