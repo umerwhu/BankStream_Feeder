@@ -16,6 +16,15 @@ The export packages listed below are in this folder. Use them when importing tas
 
 These public export packages have been sanitized: saved database URIs and TapData user identifiers were removed. Update and test connections after import. Never commit raw exports or live database passwords, tokens, or API credentials.
 
+## Task import options by deployment mode
+
+Use the following **Handling for Name Conflicts** option for both replication and transformation task imports:
+
+- **Remote Mode:** select **Reuse Existing** to reuse existing connections when names conflict. A task with a conflicting name is replaced.
+- **Local Mode:** you can select **Import as Copy** to create new copies of tasks or connections with conflicting names, using the `_import` suffix. Configure and test the copied connections before starting tasks.
+
+![TapData Task Import dialog with Reuse Existing selected for Remote Mode](../docs/images/tapdata-task-import.png)
+
 ## 2. Import replication tasks first
 <img width="2560" height="1305" alt="image" src="https://github.com/user-attachments/assets/12949179-c806-4ad1-b976-7d1c6031e75f" />
 

@@ -74,10 +74,12 @@ DEMO_API_TOKEN=<partner-token>
 
 Partners complete these steps. Import files are in `tapdata_tasks/`.
 
-1. In TapData task import, import `replication-tasks_batch-20261023.json.gz`, then `transformation_tasks_batch-20261023.json.gz`.
+1. In TapData task import, import `replication-tasks_batch-20261023.json.gz`, then `transformation_tasks_batch-20261023.json.gz`. For both imports, under **Handling for Name Conflicts**, select **Reuse Existing**. This reuses existing connections when names conflict; a task with a conflicting name is replaced.
 2. Update the database connections and run **Test Connection** for DB2 for i, Oracle, and MongoDB (FDM and MDM).
 3. Start replication in order: **AS400 to FDM**, **Oracle to FDM**, then **FDM to MDM**. Wait for each task initial synchronization before starting the next. In the transformation section, start `MDM_ACCOUNT_AND_TRANSACTIONS_CARDS` first, then `MDM_CUSTOMER360` once its input data is ready. Keep CDC running.
 4. Once MDM data is ready, open **Data Services > Api List > Import** and import `Tapdata_API_module_batch-20261023.json.gz`. Check connections and paths, publish the 13 APIs, and confirm they return demo records.
+
+![TapData Task Import dialog with Reuse Existing selected for Remote Mode](docs/images/tapdata-task-import.png)
 
 ### 4. Check the connection
 
@@ -117,7 +119,7 @@ Configure the Local Mode settings in [.env.example](.env.example) for Oracle and
 
 Partners complete these steps. Import files are in `tapdata_tasks/`.
 
-1. In TapData task import, import `replication-tasks_batch-20261023.json.gz`, then `transformation_tasks_batch-20261023.json.gz`.
+1. In TapData task import, import `replication-tasks_batch-20261023.json.gz`, then `transformation_tasks_batch-20261023.json.gz`. For both imports, you can select **Import as Copy** under **Handling for Name Conflicts**. If a task or connection name already exists, TapData creates a new copy with the `_import` suffix.
 2. Update the database connections and run **Test Connection** for DB2 for i, Oracle, and MongoDB (FDM and MDM).
 3. Start replication in order: **AS400 to FDM**, **Oracle to FDM**, then **FDM to MDM**. Wait for each task initial synchronization before starting the next. In the transformation section, start `MDM_ACCOUNT_AND_TRANSACTIONS_CARDS` first, then `MDM_CUSTOMER360` once its input data is ready. Keep CDC running.
 4. Once MDM data is ready, open **Data Services > Api List > Import** and import `Tapdata_API_module_batch-20261023.json.gz`. Check connections and paths, publish the 13 APIs, and confirm they return demo records.
