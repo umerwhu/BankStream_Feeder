@@ -34,6 +34,7 @@ test('remote dry-run preserves output and exit status without importing database
     const script = `
       const Module = require('node:module'); const load = Module._load;
       Module._load = function(name) {
+        if (name === './remote-https') return { createHttpsFetch: () => globalThis.fetch };
         if (name === 'dotenv') return { config() {} };
         if (['./db', './config', 'odbc', 'oracledb'].includes(name)) throw Error('FORBIDDEN SOURCE IMPORT');
         return load.apply(this, arguments);
@@ -63,6 +64,7 @@ test('partner script surface includes demo reset and unknown commands fail befor
     const script = `
       const Module = require('node:module'); const load = Module._load;
       Module._load = function(name) {
+        if (name === './remote-https') return { createHttpsFetch: () => globalThis.fetch };
         if (name === 'dotenv') return { config() {} };
         if (['./db', './config', 'odbc', 'oracledb'].includes(name)) throw Error('FORBIDDEN SOURCE IMPORT');
         return load.apply(this, arguments);

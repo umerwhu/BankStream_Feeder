@@ -187,6 +187,7 @@ test('actual remote realtime CLI handles argument routing, output and exit witho
   const script = `
     const Module = require('node:module'); const load = Module._load;
     Module._load = function(name) {
+      if (name === './remote-https') return { createHttpsFetch: () => globalThis.fetch };
       if (name === 'dotenv') return { config() {} };
       if (['./config', './db', './realtime', 'odbc', 'oracledb'].includes(name)) throw Error('FORBIDDEN DRIVER');
       return load.apply(this, arguments);

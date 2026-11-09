@@ -17,6 +17,7 @@ The export packages listed below are in this folder. Use them when importing tas
 These public export packages have been sanitized: saved database URIs and TapData user identifiers were removed. Update and test connections after import. Never commit raw exports or live database passwords, tokens, or API credentials.
 
 ## 2. Import replication tasks first
+<img width="2560" height="1305" alt="image" src="https://github.com/user-attachments/assets/12949179-c806-4ad1-b976-7d1c6031e75f" />
 
 1. Open the TapData environment and navigate to the task import feature.
 2. Import the **replication tasks** `.json.gz` package.
@@ -26,7 +27,7 @@ These public export packages have been sanitized: saved database URIs and TapDat
 These tasks replicate source changes into the **FDM** layer.
 
 ## 3. Import transformation tasks second
-
+<img width="2560" height="1305" alt="image" src="https://github.com/user-attachments/assets/12949179-c806-4ad1-b976-7d1c6031e75f" />
 1. Import the **transformation tasks** `.json.gz` package.
 2. Check source and target mappings: **FDM → TapData merge/join/transform → MongoDB MDM**.
 3. Confirm that the `MDM_CUSTOMER360` collection and other expected MDM collections are mapped correctly.
@@ -53,7 +54,7 @@ After all connections pass, start the tasks in the order below.
 **Step 1 — Start replication tasks (CDC)**
 
 1. Open the imported **Replication** tasks in TapData.
-<img width="2560" height="1305" alt="image" src="https://github.com/user-attachments/assets/12949179-c806-4ad1-b976-7d1c6031e75f" />
+
 
 3. Start the replication tasks and check that they show a running/healthy status.
 4. Confirm that data from Oracle and IBM i / AS400 is arriving in the **FDM** layer.

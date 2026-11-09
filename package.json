@@ -36,6 +36,7 @@
   },
   "files": [
     "src/",
+    "public-key-certificate/",
     "scripts/",
     "README.md",
     ".env.example"

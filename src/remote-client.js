@@ -69,8 +69,10 @@ function validStatus(data) {
     Array.isArray(data.kyc) && data.kyc.length >= 4;
 }
 
-function createRemoteClient({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
+function createRemoteClient({ env = process.env, fetchImpl } = {}) {
   const config = getRemoteConfig(env);
+  const { createHttpsFetch, tlsErrorMessage } = require('./remote-https');
+  fetchImpl ??= createHttpsFetch();
   if (typeof fetchImpl !== 'function') throw new Error('Remote mode requires Node.js 18 or newer');
 
   async function execute(operation, input = {}) {
@@ -126,8 +128,8 @@ function createRemoteClient({ env = process.env, fetchImpl = globalThis.fetch } 
           headers, ...(body === undefined ? {} : { body }),
           redirect: 'error', signal: controller.signal
         });
-      } catch {
-        throw new Error(controller.signal.aborted ? 'Remote request timed out' : 'Unable to reach Demo Control Service');
+      } catch (error) {
+        throw new Error(controller.signal.aborted ? 'Remote request timed out' : tlsErrorMessage(error) || 'Unable to reach Demo Control Service');
       }
       if (response.status === 401 || response.status === 403) throw new Error('Demo Control Service authentication failed; check your API token');
       if (!response.ok) throw new Error(`Demo Control Service returned HTTP ${response.status}`);

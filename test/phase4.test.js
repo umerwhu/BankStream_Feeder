@@ -77,6 +77,7 @@ function cli({ command, mode = 'remote', answer = 'y', passed = true, args = [],
     if (${JSON.stringify(command)} === 'kyc:reset') state = { ...state, status: 'REVIEW_REQUIRED', riskRating: 'HIGH' };
     Object.defineProperty(process.stdin, 'isTTY', { value: true });
     Module._load = function(name) {
+      if (name === './remote-https') return { createHttpsFetch: () => globalThis.fetch };
       if (name === 'dotenv') return { config() {} };
       if (name === 'node:readline/promises') return { createInterface: () => ({ question: async question => { console.log(question); return ${JSON.stringify(answer)}; }, close() {} }) };
       if (${JSON.stringify(mode)} === 'remote' && ['./config','./db','oracledb','odbc'].includes(name)) throw Error('FORBIDDEN DRIVER');

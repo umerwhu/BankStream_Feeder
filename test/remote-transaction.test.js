@@ -90,6 +90,7 @@ function runTransaction({ answers = ['12.5', 'y'], mode = 'remote', status = 200
     const committed = ${JSON.stringify(committed)};
     Object.defineProperty(process.stdin, 'isTTY', { value: ${tty} });
     Module._load = function(name) {
+      if (name === './remote-https') return { createHttpsFetch: () => globalThis.fetch };
       if (name === 'dotenv') return { config() {} };
       if (name === 'node:readline/promises') return { createInterface: () => ({
         question: async question => { console.log('PROMPT ' + question); return answers.shift(); }, close() {}

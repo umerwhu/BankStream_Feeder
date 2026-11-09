@@ -4,7 +4,14 @@ BankStream Feeder generates banking transactions and customer updates in Oracle 
 
 The Feeder changes source data and verifies results. It does not create schemas or configure TapData tasks, FDM, MDM, or pipelines. Source schemas, demo records, and TapData pipelines must already be set up.
 
-## Before you start: choose a mode
+## 1. Clone the Project
+
+```bash
+git clone https://github.com/umerwhu/BankStream_Feeder.git
+cd BankStream_Feeder
+```
+
+## 2. Choose Deployment Mode
 
 - **Remote Mode (recommended for partners):** TapData provides the databases and service. Skip database setup and follow [Remote Mode](#remote-mode-recommended-for-partners).
 - **Local Mode:** you manage your own Oracle and IBM i databases. Complete the database setup below first, then follow [Local Mode](#local-mode).
@@ -20,7 +27,7 @@ The Feeder changes source data and verifies results. It does not create schemas 
 | Oracle | [02_oracle_schema.sql](ddl/02_oracle_schema.sql) | [02_oracle_sample_data.sql](bulk-data/02_oracle_sample_data.sql) |
 
 3. Review setup placeholders and permissions with your database administrator. In the IBM i script, replace `username` and apply its table grant after creating the table. The Oracle script requires SQL*Plus/SQLcl and prompts for a password, PDB name, and service.
-4. Grant the Feeder user read/write access to the required tables. Ensure the demo customer and account exist and are linked through `ACCOUNT_CUSTOMER_RELATIONSHIP`.
+4. Grant the Feeder user read/write access to the required tables.
 
 The supplied scripts use `BANKCORE` for IBM i and `C##BANKCRM` for Oracle. Use the same names in your connection configuration, or adapt the scripts and configuration together. PostgreSQL is not required for the Feeder commands below.
 
@@ -31,17 +38,13 @@ The CLI connects to the TapData-hosted Control Service. The service uses your pa
 
 ### 1. Install
 
-You need Git, Node.js 24 (the validated baseline), npm, and network access to the Hosted Service. Ask Tapdata for the HTTPS URL, partner API token, and release or branch to use.
+You need Git, Node.js 24 (the validated baseline), npm, and network access to the Hosted Service. Ask Tapdata for the HTTPS URL, partner API token.
 
 ```bash
-git clone https://github.com/umerwhu/BankStream_Feeder.git
-cd BankStream_Feeder
 npm ci 
 ```
 
-The TapData operator is responsible for configuring and running replication tasks, transformation tasks, and published APIs using the [TapData Tasks Setup Guide](tapdata_tasks/README.md).
-
-Use the release or branch supplied by your operator. On Windows PowerShell, replace `npm` with `npm.cmd` if script execution policy blocks it.
+Use the release or branch supplied for your demo. On Windows PowerShell, replace `npm` with `npm.cmd` if script execution policy blocks it.
 
 ### 2. Configure
 
@@ -59,69 +62,26 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-Edit these three settings in `.env` using the URL and token from your operator:
+Edit these three settings in `.env` using your assigned service URL and partner token:
 
 ```ini
 FEEDER_MODE=remote
-DEMO_API_URL=https://demo.example.com
-DEMO_API_TOKEN=replace_with_partner_token
+DEMO_API_URL=https://127.0.0.18443
+DEMO_API_TOKEN=<partner-token>
 ```
 
-The URL must use HTTPS. No other `.env` settings are needed for Remote Mode. Keep your token private; do not commit `.env` or share it in logs or screenshots.
+### 3. TapData task setup
 
-### HTTPS Certificate Configuration
+Partners complete these steps. Import files are in `tapdata_tasks/`.
 
-Before running any remote-mode dry-run or demo commands, configure `NODE_EXTRA_CA_CERTS` to trust the supplied CA certificate when connecting to the BankStream Demo Control Service. Local mode does not require this configuration unless its HTTPS endpoints use the same private CA.
+1. In TapData task import, import `replication-tasks_batch-20261023.json.gz`, then `transformation_tasks_batch-20261023.json.gz`.
+2. Update the database connections and run **Test Connection** for DB2 for i, Oracle, and MongoDB (FDM and MDM).
+3. Start replication in order: **AS400 to FDM**, **Oracle to FDM**, then **FDM to MDM**. Wait for each task initial synchronization before starting the next. In the transformation section, start `MDM_ACCOUNT_AND_TRANSACTIONS_CARDS` first, then `MDM_CUSTOMER360` once its input data is ready. Keep CDC running.
+4. Once MDM data is ready, open **Data Services > Api List > Import** and import `Tapdata_API_module_batch-20261023.json.gz`. Check connections and paths, publish the 13 APIs, and confirm they return demo records.
 
-After installing dependencies and configuring `.env`, run the commands for your OS **from the project folder** (the folder containing this README). They save an absolute path to `public-key-certificate/bankstream-vip-2year.crt` for future terminal sessions.
+### 4. Check the connection
 
-**Windows (PowerShell):**
-
-```powershell
-$caCert = (Resolve-Path './public-key-certificate/bankstream-vip-2year.crt').Path
-[Environment]::SetEnvironmentVariable('NODE_EXTRA_CA_CERTS', $caCert, 'User')
-```
-
-Restart your terminal, then verify the variable and certificate file (`True` means the file exists):
-
-```powershell
-$env:NODE_EXTRA_CA_CERTS
-Test-Path -LiteralPath $env:NODE_EXTRA_CA_CERTS -PathType Leaf
-```
-
-**Linux (Bash):**
-
-```bash
-printf 'export NODE_EXTRA_CA_CERTS=%q\n' "$(pwd -P)/public-key-certificate/bankstream-vip-2year.crt" >> ~/.bashrc
-source ~/.bashrc
-```
-
-Verify the variable and certificate file:
-
-```bash
-printf '%s\n' "$NODE_EXTRA_CA_CERTS"
-test -f "$NODE_EXTRA_CA_CERTS" && echo 'Certificate file found'
-```
-
-**macOS (Zsh):**
-
-```zsh
-printf 'export NODE_EXTRA_CA_CERTS=%q\n' "$(pwd -P)/public-key-certificate/bankstream-vip-2year.crt" >> ~/.zshrc
-source ~/.zshrc
-```
-
-Verify the variable and certificate file:
-
-```zsh
-printf '%s\n' "$NODE_EXTRA_CA_CERTS"
-test -f "$NODE_EXTRA_CA_CERTS" && echo 'Certificate file found'
-```
-
-Restart your terminal (or source the shell file as shown) and restart any running Node.js process after configuration: Node.js reads this variable at startup. Continue with the connection check only after verification succeeds.
-
-### 3. Check the connection
-
-Before running `npm run demo:status`, `npm run demo:transaction`, or the other demo commands, confirm with your operator that the required TapData tasks have completed their initial synchronization, CDC tasks are running, and the Customer 360 and KYC APIs are published and accessible.
+Before running `npm run demo:status`, `npm run demo:transaction`, or the other demo commands, confirm that the required TapData tasks have completed their initial synchronization, CDC tasks are running, and the Customer 360 and KYC APIs are published and accessible.
 
 ```bash
 npm run dry-run
@@ -139,8 +99,6 @@ Complete the database setup above before these steps.
 Use Git, Node.js 24, and npm. Download the project and install database dependencies. If you already downloaded it for database setup, open that project folder and run only the install command:
 
 ```bash
-git clone https://github.com/umerwhu/BankStream_Feeder.git
-cd BankStream_Feeder
 npm ci 
 ```
 
@@ -154,10 +112,17 @@ FEEDER_MODE=local
 
 Configure the Local Mode settings in [.env.example](.env.example) for Oracle and IBM i connections, actual schema names, and demo IDs. These settings are required when using Local Mode. The default customer is `100002` and account is `AC1000021`. Remote service URL/token settings are not used in Local Mode.
 
-Local Mode users must configure TapData replication tasks, transformation tasks, and published APIs in their own environment. Follow the [TapData Tasks Setup Guide](tapdata_tasks/README.md) before running Feeder demo commands.
 
+### 3. TapData task setup
 
-### 3. Check the connection and demo records
+Partners complete these steps. Import files are in `tapdata_tasks/`.
+
+1. In TapData task import, import `replication-tasks_batch-20261023.json.gz`, then `transformation_tasks_batch-20261023.json.gz`.
+2. Update the database connections and run **Test Connection** for DB2 for i, Oracle, and MongoDB (FDM and MDM).
+3. Start replication in order: **AS400 to FDM**, **Oracle to FDM**, then **FDM to MDM**. Wait for each task initial synchronization before starting the next. In the transformation section, start `MDM_ACCOUNT_AND_TRANSACTIONS_CARDS` first, then `MDM_CUSTOMER360` once its input data is ready. Keep CDC running.
+4. Once MDM data is ready, open **Data Services > Api List > Import** and import `Tapdata_API_module_batch-20261023.json.gz`. Check connections and paths, publish the 13 APIs, and confirm they return demo records.
+
+### 4. Check the connection and demo records
 
 ```bash
 npm run doctor
@@ -187,7 +152,7 @@ Transaction and KYC commands require an interactive terminal. Confirmation defau
 
 For a simple demo, run `demo:transaction`, then `demo:verify`; run `demo:kyc`, then `demo:verify` again. Use `demo:reset` and select **Reset KYC** to restore the KYC baseline.
 
-`demo:reset` commits each database separately. If either step fails, it reports both outcomes and exits with an error. Remote partial failures require operator reconciliation before further writes. Remote reset requires a Control Service version with the reset endpoints.
+`demo:reset` commits each database separately. If either step fails, it reports both outcomes and exits with an error. Resolve any remote partial failures before further writes. Remote reset requires a Control Service version with the reset endpoints.
 
 ### Realtime activity
 
@@ -214,13 +179,8 @@ TapData independently captures these committed changes; `demo:verify` checks sou
 
 | Problem | What to do |
 |---|---|
-| Authentication failed | Check `DEMO_API_TOKEN`. Ask the operator whether the token expired, was revoked, or your partner access was disabled. |
-| Cannot reach the Hosted Service | Check `DEMO_API_URL`, network access, service availability, and certificate trust. `localhost` means your own computer. Ask the operator for the correct URL or CA certificate; do not disable TLS verification. |
-| Verification reports FAIL | CDC may still be synchronizing. Wait and rerun verification. If it still fails, check the reported source/API values and ask the operator to check TapData tasks and published APIs. Realtime activity can change records during comparison. |
-| Realtime options rejected | Choose duration/interval values allowed by your operator. Remote unlimited jobs are not supported. |
-| A write or job request times out | It may already have executed. Keep the reported idempotency key or job ID and contact the operator before submitting another writing command. Rerunning a command creates a new request. |
-
-## Further documentation
-
-- [Technical guide](docs/technical-guide.md): local dependencies and drivers, configuration, verification settings, service contracts, realtime limits, and developer testing.
-- [TapData Tasks Setup Guide](tapdata_tasks/README.md): import and configure replication tasks, transformation tasks, and published APIs.
+| Authentication failed | Check `DEMO_API_TOKEN`. Confirm that the token is valid and your partner access is enabled. |
+| Cannot reach the Hosted Service | Check `DEMO_API_URL`, network access, service availability, and certificate trust. `localhost` means your own computer. Confirm the service URL and certificate configuration; do not disable TLS verification. |
+| Verification reports FAIL | CDC may still be synchronizing. Wait and rerun verification. If it still fails, check the reported source/API values and check your TapData tasks and published APIs. Realtime activity can change records during comparison. |
+| Realtime options rejected | Choose duration/interval values allowed by the service. Remote unlimited jobs are not supported. |
+| A write or job request times out | It may already have executed. Keep the reported idempotency key or job ID and confirm the request outcome before submitting another writing command. Rerunning a command creates a new request. |

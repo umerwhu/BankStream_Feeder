@@ -85,6 +85,7 @@ function runCli({ mode, command = 'status', entry = 'demo-cli.js', fail = false 
     const original = Module._load;
     const fixture = ${JSON.stringify(result)};
     Module._load = function(name, parent, main) {
+      if (name === './remote-https') return { createHttpsFetch: () => globalThis.fetch };
       if (name === 'dotenv') return { config() {} };
       if (${JSON.stringify(mode)} === 'remote' && ['oracledb', 'odbc', './db', './config', './realtime', './db2-jdbc-bridge'].includes(name)) {
         throw new Error('FORBIDDEN DATABASE IMPORT: ' + name);
