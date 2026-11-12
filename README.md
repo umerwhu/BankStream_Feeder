@@ -66,7 +66,7 @@ Edit these three settings in `.env` using your assigned service URL and partner 
 
 ```ini
 FEEDER_MODE=remote
-DEMO_API_URL=https://127.0.0.8443
+DEMO_API_URL=https://127.0.0.1:8443
 DEMO_API_TOKEN=<partner-token>
 DEMO_API_TIMEOUT_MS=150000
 ```
